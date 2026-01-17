@@ -57,4 +57,4 @@ def run_gx_setup():
     session.close()
 
 if __name__ == "__main__":
-    run_gx_setup()
+    run_gx_setup() 

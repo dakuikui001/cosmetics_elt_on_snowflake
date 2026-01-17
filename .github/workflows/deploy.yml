@@ -115,24 +115,27 @@ jobs:
           # 修正：直接运行路径下的脚本
           python infrastructure/setup_tables.py
 
-      # --- 第五阶段：运行 GX Setup (仅生成本地文件) ---
+      # --- 第五阶段：运行 GX Setup (生成本地文件) ---
       - name: Generate GX Configs Locally
         if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
         env:
           SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ env.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ env.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
           SNOWFLAKE_WAREHOUSE: ${{ env.SNOWFLAKE_WAREHOUSE }}
-        run: |
-          python infrastructure/setup_gx.py
+        run: python infrastructure/setup_gx.py
 
-      # --- 第六阶段：直接使用 AWS CLI 同步到 S3 ---
-      # 🔴 核心修复：绕过 Snowflake PUT 限制，直接操作物理 S3 桶
+      # --- 第六阶段：配置 AWS 凭证 ---
+      - name: Configure AWS Credentials
+        if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-1
+
+      # --- 第七阶段：同步到 S3 ---
       - name: Sync GX Configs to S3
         if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: "ap-southeast-1" 
         run: |
           aws s3 sync /tmp/gx_configs s3://bucket-for-snowflake-projects/cosmetics_etl_project/gx_configs/great_expectations/ --delete
