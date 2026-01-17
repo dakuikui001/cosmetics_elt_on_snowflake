@@ -115,8 +115,8 @@ jobs:
           # 修正：直接运行路径下的脚本
           python infrastructure/setup_tables.py
 
-      # --- 第五阶段：执行 GX 1.10.0 自动化设置 (新增阶段) ---
-      - name: Run Great Expectations Setup
+      # --- 第五阶段：运行 GX Setup (仅生成本地文件) ---
+      - name: Generate GX Configs Locally
         if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
         env:
           SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
@@ -125,3 +125,14 @@ jobs:
           SNOWFLAKE_WAREHOUSE: ${{ env.SNOWFLAKE_WAREHOUSE }}
         run: |
           python infrastructure/setup_gx.py
+
+      # --- 第六阶段：直接使用 AWS CLI 同步到 S3 ---
+      # 🔴 核心修复：绕过 Snowflake PUT 限制，直接操作物理 S3 桶
+      - name: Sync GX Configs to S3
+        if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: "ap-southeast-1" 
+        run: |
+          aws s3 sync /tmp/gx_configs s3://bucket-for-snowflake-projects/cosmetics_etl_project/gx_configs/great_expectations/ --delete
