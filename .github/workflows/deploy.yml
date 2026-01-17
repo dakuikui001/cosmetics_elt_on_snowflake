@@ -85,8 +85,9 @@ jobs:
 
       # --- 第三阶段：SQL (创建 File Format、Pipe、刷新环境) ---
       - name: Run Infrastructure SQL
-        uses: snowflake-labs/snowflake-action@v1
+        uses: snowflake-labs/snowflake-action@v1.5 # 确保版本号正确
         with:
+          # 注意：这里的变量名必须严格遵守该 Action 的文档
           account: ${{ env.SNOWFLAKE_ACCOUNT }}
           user: ${{ env.SNOWFLAKE_USER }}
           password: ${{ env.SNOWFLAKE_PASSWORD }}
@@ -94,4 +95,4 @@ jobs:
           warehouse: "COMPUTE_WH"
           database: "COSMETICS_DB_DEV"
           schema: "COSMETICS"
-          directory-path: "infrastructure" # 这会执行 create_streams.sql
+          directory-path: "infrastructure"
