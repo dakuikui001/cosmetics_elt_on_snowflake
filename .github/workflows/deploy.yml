@@ -22,23 +22,13 @@ jobs:
 
       - name: Terraform Apply
         env:
-          # 基础信息
-          SNOWFLAKE_ORG: "TMJESFF"
-          SNOWFLAKE_ACCOUNT: "ED32433"
-          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-          # 核心：Secrets 中的多行私钥
-          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          # 依然使用官方推荐的环境变量名
+          SNOWFLAKE_ORGANIZATION_NAME: "TMJESFF"
+          SNOWFLAKE_ACCOUNT_NAME:      "ED32433"
+          SNOWFLAKE_USER:              ${{ secrets.SNOWFLAKE_USER }}
+          # 改用密码变量
+          SNOWFLAKE_PASSWORD:          ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_ROLE:              "ACCOUNTADMIN"
         run: |
           cd terraform
-          
-          echo "=== Diagnostic Info ==="
-          echo "User: $SNOWFLAKE_USER"
-          echo "Key Length: ${#SNOWFLAKE_PRIVATE_KEY}"
-          echo "======================="
-
-          # 使用引号包裹变量，防止多行字符串被拆散
-          terraform apply -auto-approve \
-            -var="snowflake_org=$SNOWFLAKE_ORG" \
-            -var="snowflake_account=$SNOWFLAKE_ACCOUNT" \
-            -var="snowflake_user=$SNOWFLAKE_USER" \
-            -var="snowflake_private_key=$SNOWFLAKE_PRIVATE_KEY"
+          terraform apply -auto-approve
