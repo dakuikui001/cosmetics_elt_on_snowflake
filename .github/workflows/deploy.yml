@@ -12,7 +12,6 @@ env:
   SNOWFLAKE_ROLE: "ACCOUNTADMIN"
 
 jobs:
-  # 🔴 新增：检测文件变动的作业
   check_changes:
     runs-on: ubuntu-latest
     outputs:
@@ -31,7 +30,7 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
-    needs: check_changes # 🔴 依赖检测作业
+    needs: check_changes
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -61,8 +60,9 @@ jobs:
         run: pip install snowflake-snowpark-python
 
       # --- 第三阶段：执行基础设施 SQL (仅当 setup_infra.sql 变动时) ---
+      # 🔴 修正：needs 后面跟的是点号 . 
       - name: Run Physical Infrastructure SQL
-        if: needs:check_changes.outputs.infra_sql == 'true' || github.event_name == 'workflow_dispatch'
+        if: needs.check_changes.outputs.infra_sql == 'true' || github.event_name == 'workflow_dispatch'
         env:
           SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ env.SNOWFLAKE_USER }}
@@ -100,8 +100,9 @@ jobs:
           "
 
       # --- 第四阶段：运行 Python 建表 (仅当 infrastructure 文件夹下有变动时) ---
+      # 🔴 修正：needs 后面跟的是点号 .
       - name: Run Table & Stream Setup
-        if: needs:check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
+        if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
         env:
           SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ env.SNOWFLAKE_USER }}
