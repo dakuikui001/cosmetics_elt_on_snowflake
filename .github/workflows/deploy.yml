@@ -20,8 +20,7 @@ jobs:
           cd terraform
           terraform init
 
-      - name: Terraform Import (接管现有 Schema 防止报错)
-        # continue-on-error 是关键：如果 Schema 已被接管过，报错也会继续执行下一步
+      - name: Terraform Import All (全资源接管)
         continue-on-error: true 
         env:
           SNOWFLAKE_ORGANIZATION_NAME: "TMJESFF"
@@ -31,8 +30,20 @@ jobs:
           SNOWFLAKE_ROLE:              "ACCOUNTADMIN"
         run: |
           cd terraform
-          # 将云端的 COSMETICS 架构导入到代码中的 cosmetics_schema 资源
+          # 1. 数据库
+          terraform import snowflake_database.cosmetics_db "COSMETICS_DB_DEV"
+          # 2. 存储集成
+          terraform import snowflake_storage_integration.s3_int "S3_INT_NEW"
+          # 3. 外部卷
+          terraform import snowflake_external_volume.cosmetics_volume "COSMETICS_S3_VOLUME"
+          # 4. Schema
           terraform import snowflake_schema.cosmetics_schema "\"COSMETICS_DB_DEV\".\"COSMETICS\""
+          # 5. 主 Stage
+          terraform import snowflake_stage.cosmetics_s3_stage "\"COSMETICS_DB_DEV\".\"COSMETICS\".\"COSMETICS_S3_STAGE\""
+          # 6. 触发器 Stage
+          terraform import snowflake_stage.trigger_stage "\"COSMETICS_DB_DEV\".\"COSMETICS\".\"COSMETICS_TRIGGER_S3_STAGE\""
+          # 7. 触发器 Stream
+          terraform import snowflake_stream_on_directory_table.trigger_stream "\"COSMETICS_DB_DEV\".\"COSMETICS\".\"TRIGGER_S3_FILE_STREAM\""
 
       - name: Terraform Apply
         env:
