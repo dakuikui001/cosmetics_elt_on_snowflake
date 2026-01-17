@@ -50,25 +50,14 @@ resource "snowflake_stage" "trigger_stage" {
   directory           = "ENABLE = TRUE AUTO_REFRESH = TRUE"
 }
 
-# 7. 修正：使用全称标识符拼接 (Database.Schema.Stage)
+# 7. 触发器 Stream
 resource "snowflake_stream_on_directory_table" "trigger_stream" {
   name     = "TRIGGER_S3_FILE_STREAM"
   database = snowflake_database.cosmetics_db.name
   schema   = snowflake_schema.cosmetics_schema.name
   
-  # 关键修改：拼接全路径
+  # 使用全称路径
   stage    = "\"${snowflake_database.cosmetics_db.name}\".\"${snowflake_schema.cosmetics_schema.name}\".\"${snowflake_stage.trigger_stage.name}\""
   
   comment  = "Stream to monitor new files in the raw stage"
-}
-
-# 8. Pipe
-resource "snowflake_pipe" "arn_pipe" {
-  name     = "GET_ARN_PIPE"
-  database = snowflake_database.cosmetics_db.name
-  schema   = snowflake_schema.cosmetics_schema.name
-  
-  # 同样确保 COPY 语句里是全路径
-  copy_statement = "COPY INTO \"${snowflake_database.cosmetics_db.name}\".\"${snowflake_schema.cosmetics_schema.name}\".DATA_QUALITY_QUARANTINE FROM @\"${snowflake_database.cosmetics_db.name}\".\"${snowflake_schema.cosmetics_schema.name}\".\"${snowflake_stage.trigger_stage.name}\""
-  auto_ingest    = true
 }
