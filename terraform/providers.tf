@@ -1,3 +1,9 @@
+# 定义变量（这些变量会接收 GitHub env 传来的值）
+variable "snowflake_org" {}
+variable "snowflake_account" {}
+variable "snowflake_user" {}
+variable "snowflake_private_key" {}
+
 terraform {
   required_providers {
     snowflake = {
@@ -8,4 +14,9 @@ terraform {
 }
 
 provider "snowflake" {
+  organization_name = var.snowflake_org
+  account_name      = var.snowflake_account
+  user              = var.snowflake_user
+  private_key       = var.snowflake_private_key
+  role              = "ACCOUNTADMIN"
 }

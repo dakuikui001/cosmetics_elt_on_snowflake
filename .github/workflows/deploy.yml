@@ -22,22 +22,22 @@ jobs:
 
       - name: Terraform Apply
         env:
-          # 1. 基础账号定位
-          SNOWFLAKE_ORGANIZATION_NAME: "TMJESFF"
-          SNOWFLAKE_ACCOUNT_NAME:      "ED32433"
-          # 2. 备用账号格式 (Org-Account)
-          SNOWFLAKE_ACCOUNT:           "TMJESFF-ED32433"
-          # 3. 身份验证信息
-          SNOWFLAKE_USER:              ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PRIVATE_KEY:       ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
-          # 4. 权限设置
-          SNOWFLAKE_ROLE:              "ACCOUNTADMIN"
+          # 准备好环境变量
+          MY_ORG: "TMJESFF"
+          MY_ACC: "ED32433"
+          MY_USER: ${{ secrets.SNOWFLAKE_USER }}
+          MY_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
         run: |
           cd terraform
           
           echo "=== Diagnostic Info ==="
-          echo "User: $SNOWFLAKE_USER"
-          echo "Key Length: ${#SNOWFLAKE_PRIVATE_KEY}"
+          echo "User: $MY_USER"
+          echo "Key Length: ${#MY_KEY}"
           echo "======================="
 
-          terraform apply -auto-approve
+          # 显式地将环境变量通过 -var 塞给 Terraform 变量
+          terraform apply -auto-approve \
+            -var="snowflake_org=$MY_ORG" \
+            -var="snowflake_account=$MY_ACC" \
+            -var="snowflake_user=$MY_USER" \
+            -var="snowflake_private_key=$MY_KEY"
