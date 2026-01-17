@@ -84,14 +84,36 @@ jobs:
           python setup_tables.py
 
       # --- 第三阶段：SQL (创建 File Format、Pipe、刷新环境) ---
-      - name: Run Infrastructure SQL
-        uses: snowflake-labs/snowflake-action@v1  # 修正路径并使用 v1 标签
-        with:
-          account: ${{ env.SNOWFLAKE_ACCOUNT }}
-          user: ${{ env.SNOWFLAKE_USER }}
-          password: ${{ env.SNOWFLAKE_PASSWORD }}
-          role: ${{ env.SNOWFLAKE_ROLE }}
-          warehouse: "COMPUTE_WH"
-          database: "COSMETICS_DB_DEV"
-          schema: "COSMETICS"
-          directory-path: "infrastructure"
+      - name: Run Infrastructure SQL via Python
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ env.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ env.SNOWFLAKE_PASSWORD }}
+        run: |
+          python -c "
+          import os
+          import snowflake.snowpark as snowpark
+          
+          # 建立连接
+          session = snowpark.Session.builder.configs({
+              'account': '${{ env.SNOWFLAKE_ACCOUNT }}',
+              'user': '${{ env.SNOWFLAKE_USER }}',
+              'password': '${{ env.SNOWFLAKE_PASSWORD }}',
+              'role': 'ACCOUNTADMIN',
+              'warehouse': 'COMPUTE_WH',
+              'database': 'COSMETICS_DB_DEV',
+              'schema': 'COSMETICS'
+          }).create()
+          
+          try:
+              print('🚀 正在执行辅助 SQL 脚本...')
+              with open('infrastructure/create_streams.sql', 'r') as f:
+                  # 以分号分割 SQL 语句，并过滤掉空行
+                  queries = [q.strip() for q in f.read().split(';') if q.strip()]
+                  for query in queries:
+                      print(f'执行中: {query[:50]}...')
+                      session.sql(query).collect()
+              print('✅ SQL 部署成功！')
+          finally:
+              session.close()
+          "
