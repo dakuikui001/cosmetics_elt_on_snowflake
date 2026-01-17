@@ -13,10 +13,10 @@ resource "snowflake_storage_integration" "s3_int" {
   storage_allowed_locations = ["s3://bucket-for-snowflake-projects/cosmetics_etl_project/"]
 }
 
-# 3. 外部卷 (修复权限变更报错)
+# 3. 外部卷 (修复权限与路径匹配)
 resource "snowflake_external_volume" "cosmetics_volume" {
   name         = "COSMETICS_S3_VOLUME"
-  allow_writes = "true" # 强制匹配云端权限，防止 Snowflake 拒绝修改已绑定的 Iceberg 卷
+  allow_writes = "true"
 
   storage_location {
     storage_location_name = "my-s3-cosmetics"
@@ -26,13 +26,30 @@ resource "snowflake_external_volume" "cosmetics_volume" {
   }
 }
 
-# 4. 架构
+# 4. 架构 (强制对齐云端所有默认参数，防止 Replacement)
 resource "snowflake_schema" "cosmetics_schema" {
   database = snowflake_database.cosmetics_db.name
   name     = "COSMETICS"
 
+  # 关键修复：显式匹配云端抛出的差异参数
+  is_transient                  = false
+  with_managed_access           = false
+  data_retention_time_in_days   = 1
+  max_data_extension_time_in_days = 14
+  
   lifecycle {
     prevent_destroy = true
+    # 终极保险：忽略任何其他由 Snowflake 自动生成的微小参数变动
+    ignore_changes = [
+      parameters,
+      storage_serialization_policy,
+      suspend_task_after_num_failures,
+      task_auto_retry_attempts,
+      trace_level,
+      user_task_managed_initial_warehouse_size,
+      user_task_minimum_trigger_interval_in_seconds,
+      user_task_timeout_ms
+    ]
   }
 }
 
@@ -45,7 +62,7 @@ resource "snowflake_stage" "cosmetics_s3_stage" {
   storage_integration = snowflake_storage_integration.s3_int.name
 }
 
-# 6. 触发器 Stage (通过 ignore_changes 防止因 SQS 通知导致的销毁重建)
+# 6. 触发器 Stage
 resource "snowflake_stage" "trigger_stage" {
   name                = "COSMETICS_TRIGGER_S3_STAGE"
   database            = snowflake_database.cosmetics_db.name
@@ -55,7 +72,6 @@ resource "snowflake_stage" "trigger_stage" {
   directory           = "ENABLE = TRUE AUTO_REFRESH = TRUE"
 
   lifecycle {
-    # 强制忽略 directory 的变更，因为导入时云端自动生成的 SQS ARN 无法在代码中完全匹配
     ignore_changes = [directory]
   }
 }
@@ -65,8 +81,5 @@ resource "snowflake_stream_on_directory_table" "trigger_stream" {
   name     = "TRIGGER_S3_FILE_STREAM"
   database = snowflake_database.cosmetics_db.name
   schema   = snowflake_schema.cosmetics_schema.name
-  
   stage    = "\"${snowflake_database.cosmetics_db.name}\".\"${snowflake_schema.cosmetics_schema.name}\".\"${snowflake_stage.trigger_stage.name}\""
-  
-  comment  = "Stream to monitor new files in the raw stage"
 }

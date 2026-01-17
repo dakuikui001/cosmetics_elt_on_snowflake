@@ -20,7 +20,7 @@ jobs:
           cd terraform
           terraform init
 
-      - name: Terraform Smart Import (智能接管)
+      - name: Terraform Smart Import
         continue-on-error: true
         env:
           SNOWFLAKE_ORGANIZATION_NAME: "TMJESFF"
@@ -30,31 +30,18 @@ jobs:
           SNOWFLAKE_ROLE:              "ACCOUNTADMIN"
         run: |
           cd terraform
-          
           smart_import() {
-            local resource_path=$1
-            local snowflake_id=$2
-            echo "--- Checking $resource_path ---"
-            if ! terraform state list | grep -q "$resource_path"; then
-              echo "Importing $snowflake_id into $resource_path..."
-              terraform import "$resource_path" "$snowflake_id" || echo "Import failed for $resource_path, moving on..."
-            else
-              echo "$resource_path is already managed. Skipping."
+            local res=$1; local id=$2
+            if ! terraform state list | grep -q "$res"; then
+              terraform import "$res" "$id" || true
             fi
           }
-
-          # 1. Database
           smart_import "snowflake_database.cosmetics_db" "COSMETICS_DB_DEV"
-          # 2. Integration
           smart_import "snowflake_storage_integration.s3_int" "S3_INT_NEW"
-          # 3. External Volume
           smart_import "snowflake_external_volume.cosmetics_volume" "COSMETICS_S3_VOLUME"
-          # 4. Schema 
           smart_import "snowflake_schema.cosmetics_schema" "COSMETICS_DB_DEV.COSMETICS"
-          # 5. Stages 
           smart_import "snowflake_stage.cosmetics_s3_stage" "COSMETICS_DB_DEV.COSMETICS.COSMETICS_S3_STAGE"
           smart_import "snowflake_stage.trigger_stage" "COSMETICS_DB_DEV.COSMETICS.COSMETICS_TRIGGER_S3_STAGE"
-          # 6. Stream 
           smart_import "snowflake_stream_on_directory_table.trigger_stream" "COSMETICS_DB_DEV.COSMETICS.TRIGGER_S3_FILE_STREAM"
 
       - name: Terraform Apply
