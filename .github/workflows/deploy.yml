@@ -78,7 +78,7 @@ jobs:
           cd infrastructure
           python setup_tables.py
 
-      # --- 第三阶段：SQL (使用 Python 脚本作为执行器) ---
+      # --- 第三阶段：SQL (通过 Python 执行，增加了空语句和纯注释过滤) ---
       - name: Run Infrastructure SQL via Python
         env:
           SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
@@ -87,33 +87,42 @@ jobs:
         run: |
           python -c "
           import os
+          import re
           import snowflake.snowpark as snowpark
           
-          # 从环境变量获取，确保不会是 None
-          account = os.getenv('SNOWFLAKE_ACCOUNT')
-          user = os.getenv('SNOWFLAKE_USER')
-          password = os.getenv('SNOWFLAKE_PASSWORD')
-          
           session = snowpark.Session.builder.configs({
-              'account': account,
-              'user': user,
-              'password': password,
+              'account': '${{ env.SNOWFLAKE_ACCOUNT }}',
+              'user': '${{ env.SNOWFLAKE_USER }}',
+              'password': '${{ env.SNOWFLAKE_PASSWORD }}',
               'role': 'ACCOUNTADMIN',
               'warehouse': 'COMPUTE_WH',
               'database': 'COSMETICS_DB_DEV',
               'schema': 'COSMETICS'
           }).create()
           
+          def is_valid_sql(sql):
+              # 移除注释（-- 和 /* */）
+              content = re.sub(r'--.*', '', sql)
+              content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+              return len(content.strip()) > 0
+
           try:
               print('🚀 正在执行辅助 SQL 脚本...')
               with open('infrastructure/create_streams.sql', 'r') as f:
-                  # 过滤注释并分割语句
-                  raw_content = f.read()
-                  queries = [q.strip() for q in raw_content.split(';') if q.strip()]
+                  # 以分号分割 SQL 语句
+                  queries = [q.strip() for q in f.read().split(';') if q.strip()]
+                  
                   for query in queries:
-                      print(f'执行中: {query[:50]}...')
-                      session.sql(query).collect()
+                      # 关键修复：只有当语句中包含有效 SQL 代码时才执行
+                      if is_valid_sql(query):
+                          print(f'执行中: {query[:50]}...')
+                          session.sql(query).collect()
+                      else:
+                          print('跳过纯注释/空语句段落')
               print('✅ SQL 部署成功！')
+          except Exception as e:
+              print(f'❌ 执行失败: {str(e)}')
+              exit(1)
           finally:
               session.close()
           "
