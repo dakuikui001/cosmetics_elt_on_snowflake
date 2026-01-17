@@ -1,7 +1,6 @@
-# 定义变量（这些变量会接收 GitHub Secrets 的值）
-variable "snowflake_account" { type = string }
-variable "snowflake_user"    { type = string }
-variable "snowflake_private_key" { type = string }
+variable "snowflake_account" {}
+variable "snowflake_user" {}
+variable "snowflake_private_key" {}
 
 terraform {
   required_providers {
@@ -13,9 +12,11 @@ terraform {
 }
 
 provider "snowflake" {
-  organization_name = "TMJESFF"
-  account_name      = "ED32433"
+  # 彻底解决 Account 警告：从 ACCOUNT 变量中提取组织名和账号名
+  # 假设你的格式是 "ORG-ACCOUNT"
+  organization_name = split("-", var.snowflake_account)[0]
+  account_name      = split("-", var.snowflake_account)[1]
   user              = var.snowflake_user
-  private_key       = var.snowflake_private_key # 关键：改用私钥
+  private_key       = var.snowflake_private_key
   role              = "ACCOUNTADMIN"
 }
