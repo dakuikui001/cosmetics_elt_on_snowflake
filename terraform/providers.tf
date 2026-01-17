@@ -1,4 +1,3 @@
-# 定义变量（这些变量会接收 GitHub env 传来的值）
 variable "snowflake_org" {}
 variable "snowflake_account" {}
 variable "snowflake_user" {}
