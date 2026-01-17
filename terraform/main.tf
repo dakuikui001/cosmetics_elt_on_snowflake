@@ -25,10 +25,14 @@ resource "snowflake_external_volume" "cosmetics_volume" {
   }
 }
 
-# 4. 架构 (添加了生命周期保护)
+# 4. 架构 (修正属性以防止重建)
 resource "snowflake_schema" "cosmetics_schema" {
   database = snowflake_database.cosmetics_db.name
   name     = "COSMETICS"
+
+  # 修复核心：显式匹配现有云端属性，消除 "-/+ destroy and then create replacement"
+  is_transient        = false
+  with_managed_access = false
 
   # 关键：即便以后执行 terraform destroy，也不会删除这个 Schema 及其数据
   lifecycle {
@@ -36,7 +40,7 @@ resource "snowflake_schema" "cosmetics_schema" {
   }
 }
 
-# 5. 主 Stage
+# 5. 主 Stage (存放代码和处理后数据)
 resource "snowflake_stage" "cosmetics_s3_stage" {
   name                = "COSMETICS_S3_STAGE"
   database            = snowflake_database.cosmetics_db.name
@@ -45,7 +49,7 @@ resource "snowflake_stage" "cosmetics_s3_stage" {
   storage_integration = snowflake_storage_integration.s3_int.name
 }
 
-# 6. 触发器 Stage
+# 6. 触发器 Stage (监控 /raw 文件夹)
 resource "snowflake_stage" "trigger_stage" {
   name                = "COSMETICS_TRIGGER_S3_STAGE"
   database            = snowflake_database.cosmetics_db.name
@@ -55,13 +59,13 @@ resource "snowflake_stage" "trigger_stage" {
   directory           = "ENABLE = TRUE AUTO_REFRESH = TRUE"
 }
 
-# 7. 触发器 Stream
+# 7. 触发器 Stream (监控文件上传)
 resource "snowflake_stream_on_directory_table" "trigger_stream" {
   name     = "TRIGGER_S3_FILE_STREAM"
   database = snowflake_database.cosmetics_db.name
   schema   = snowflake_schema.cosmetics_schema.name
   
-  # 使用全称路径拼接
+  # 使用全称路径拼接，适配最新 Provider 要求
   stage    = "\"${snowflake_database.cosmetics_db.name}\".\"${snowflake_schema.cosmetics_schema.name}\".\"${snowflake_stage.trigger_stage.name}\""
   
   comment  = "Stream to monitor new files in the raw stage"
