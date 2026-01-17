@@ -55,7 +55,7 @@ resource "snowflake_schema" "cosmetics_schema" {
   }
 }
 
-# 5. 主 Stage (增加 ignore_changes)
+# 5. 主 Stage
 resource "snowflake_stage" "cosmetics_s3_stage" {
   name                = "COSMETICS_S3_STAGE"
   database            = snowflake_database.cosmetics_db.name
@@ -64,6 +64,7 @@ resource "snowflake_stage" "cosmetics_s3_stage" {
   storage_integration = snowflake_storage_integration.s3_int.name
 
   lifecycle {
+    # 强制忽略所有可能导致重建的属性
     ignore_changes = [url, storage_integration]
   }
 }

@@ -20,8 +20,7 @@ jobs:
           cd terraform
           terraform init
 
-      - name: Terraform Smart Import (智能接管)
-        # 即使个别导入失败也继续执行，由 Apply 步骤进行最终同步
+      - name: Terraform Smart Import
         continue-on-error: true
         env:
           SNOWFLAKE_ORGANIZATION_NAME: "TMJESFF"
@@ -32,32 +31,28 @@ jobs:
         run: |
           cd terraform
           
-          # 定义高级导入函数：
-          # 1. 检查 state 是否已管理该资源
-          # 2. 如果未管理，尝试标准点号格式导入
-          # 3. 如果失败，尝试带引号的转义格式导入
           smart_import() {
             local res=$1
             local id=$2
-            echo "--- 检查资源路径: $res ---"
+            echo "--- Checking $res ---"
             if ! terraform state list | grep -q "$res"; then
-              echo "正在尝试导入 $id ..."
-              terraform import "$res" "$id" || \
-              terraform import "$res" "\"$(echo $id | sed 's/\./\".\"/g')\"" || \
-              echo "导入 $res 失败，将由 Apply 步骤尝试创建或同步。"
+              echo "Importing $id into $res ..."
+              terraform import "$res" "$id" || echo "Import failed for $res"
             else
-              echo "资源 $res 已在 State 中，跳过导入。"
+              echo "$res already managed."
             fi
           }
 
-          # 执行批量接管逻辑
           smart_import "snowflake_database.cosmetics_db" "COSMETICS_DB_DEV"
           smart_import "snowflake_storage_integration.s3_int" "S3_INT_NEW"
           smart_import "snowflake_external_volume.cosmetics_volume" "COSMETICS_S3_VOLUME"
-          smart_import "snowflake_schema.cosmetics_schema" "COSMETICS_DB_DEV.COSMETICS"
-          smart_import "snowflake_stage.cosmetics_s3_stage" "COSMETICS_DB_DEV.COSMETICS.COSMETICS_S3_STAGE"
-          smart_import "snowflake_stage.trigger_stage" "COSMETICS_DB_DEV.COSMETICS.COSMETICS_TRIGGER_S3_STAGE"
-          smart_import "snowflake_stream_on_directory_table.trigger_stream" "COSMETICS_DB_DEV.COSMETICS.TRIGGER_S3_FILE_STREAM"
+          
+          smart_import "snowflake_schema.cosmetics_schema" "COSMETICS_DB_DEV|COSMETICS"
+          
+          smart_import "snowflake_stage.cosmetics_s3_stage" "COSMETICS_DB_DEV|COSMETICS|COSMETICS_S3_STAGE"
+          smart_import "snowflake_stage.trigger_stage" "COSMETICS_DB_DEV|COSMETICS|COSMETICS_TRIGGER_S3_STAGE"
+          
+          smart_import "snowflake_stream_on_directory_table.trigger_stream" "COSMETICS_DB_DEV|COSMETICS|TRIGGER_S3_FILE_STREAM"
 
       - name: Terraform Apply
         env:
