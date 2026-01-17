@@ -13,12 +13,12 @@ resource "snowflake_storage_integration" "s3_int" {
   storage_allowed_locations = ["s3://bucket-for-snowflake-projects/cosmetics_etl_project/"]
 }
 
-# 3. 外部卷 (修复了 storage_location_name 报错)
+# 3. 外部卷
 resource "snowflake_external_volume" "cosmetics_volume" {
   name = "COSMETICS_S3_VOLUME"
   
   storage_location {
-    storage_location_name = "my-s3-cosmetics" # 修复：改为 storage_location_name
+    storage_location_name = "my-s3-cosmetics"
     storage_provider      = "S3"
     storage_base_url      = "s3://bucket-for-snowflake-projects/cosmetics_etl_project/"
     storage_aws_role_arn  = "arn:aws:iam::040591921557:role/snowflake_access_role_new-volume"
@@ -50,12 +50,14 @@ resource "snowflake_stage" "trigger_stage" {
   directory           = "ENABLE = TRUE AUTO_REFRESH = TRUE"
 }
 
-# 7. 修复：使用最新的专用资源监控 Directory Stage
+# 7. 修正：使用全称标识符拼接 (Database.Schema.Stage)
 resource "snowflake_stream_on_directory_table" "trigger_stream" {
   name     = "TRIGGER_S3_FILE_STREAM"
   database = snowflake_database.cosmetics_db.name
   schema   = snowflake_schema.cosmetics_schema.name
-  stage    = snowflake_stage.trigger_stage.name
+  
+  # 关键修改：拼接全路径
+  stage    = "\"${snowflake_database.cosmetics_db.name}\".\"${snowflake_schema.cosmetics_schema.name}\".\"${snowflake_stage.trigger_stage.name}\""
   
   comment  = "Stream to monitor new files in the raw stage"
 }
@@ -66,6 +68,7 @@ resource "snowflake_pipe" "arn_pipe" {
   database = snowflake_database.cosmetics_db.name
   schema   = snowflake_schema.cosmetics_schema.name
   
-  copy_statement = "COPY INTO ${snowflake_database.cosmetics_db.name}.${snowflake_schema.cosmetics_schema.name}.DATA_QUALITY_QUARANTINE FROM @${snowflake_database.cosmetics_db.name}.${snowflake_schema.cosmetics_schema.name}.${snowflake_stage.trigger_stage.name}"
+  # 同样确保 COPY 语句里是全路径
+  copy_statement = "COPY INTO \"${snowflake_database.cosmetics_db.name}\".\"${snowflake_schema.cosmetics_schema.name}\".DATA_QUALITY_QUARANTINE FROM @\"${snowflake_database.cosmetics_db.name}\".\"${snowflake_schema.cosmetics_schema.name}\".\"${snowflake_stage.trigger_stage.name}\""
   auto_ingest    = true
 }
