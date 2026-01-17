@@ -22,21 +22,22 @@ jobs:
 
       - name: Terraform Apply
         env:
-          # 严格对应的官方环境变量名
+          # 1. 基础账号定位
           SNOWFLAKE_ORGANIZATION_NAME: "TMJESFF"
           SNOWFLAKE_ACCOUNT_NAME:      "ED32433"
+          # 2. 备用账号格式 (Org-Account)
+          SNOWFLAKE_ACCOUNT:           "TMJESFF-ED32433"
+          # 3. 身份验证信息
           SNOWFLAKE_USER:              ${{ secrets.SNOWFLAKE_USER }}
           SNOWFLAKE_PRIVATE_KEY:       ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          # 4. 权限设置
+          SNOWFLAKE_ROLE:              "ACCOUNTADMIN"
         run: |
           cd terraform
           
-          # --- 诊断步骤：如果报错，请检查 Actions 日志中的以下输出 ---
           echo "=== Diagnostic Info ==="
           echo "User: $SNOWFLAKE_USER"
-          echo "Org: $SNOWFLAKE_ORGANIZATION_NAME"
-          echo "Account: $SNOWFLAKE_ACCOUNT_NAME"
-          # 打印私钥长度，正常 2048 位密钥长度应在 1600-1800 字符左右
-          echo "Private Key Length: ${#SNOWFLAKE_PRIVATE_KEY}"
+          echo "Key Length: ${#SNOWFLAKE_PRIVATE_KEY}"
           echo "======================="
 
           terraform apply -auto-approve
