@@ -21,7 +21,7 @@ jobs:
           terraform init
 
       - name: Terraform Import (全量接管现有资源)
-        # continue-on-error 确保：如果资源尚未创建，import 会报错跳过，由 apply 执行创建
+        # continue-on-error 确保：若资源尚未创建，import 报错跳过后由 apply 创建；若已存在则成功接管。
         continue-on-error: true 
         env:
           SNOWFLAKE_ORGANIZATION_NAME: "TMJESFF"
@@ -33,17 +33,22 @@ jobs:
           cd terraform
           # 1. Database
           terraform import snowflake_database.cosmetics_db "COSMETICS_DB_DEV"
+          
           # 2. Storage Integration
           terraform import snowflake_storage_integration.s3_int "S3_INT_NEW"
+          
           # 3. External Volume
           terraform import snowflake_external_volume.cosmetics_volume "COSMETICS_S3_VOLUME"
-          # 4. Schema
-          terraform import snowflake_schema.cosmetics_schema "\"COSMETICS_DB_DEV\".\"COSMETICS\""
-          # 5. Stages 
-          terraform import snowflake_stage.cosmetics_s3_stage "\"COSMETICS_DB_DEV\".\"COSMETICS\".\"COSMETICS_S3_STAGE\""
-          terraform import snowflake_stage.trigger_stage "\"COSMETICS_DB_DEV\".\"COSMETICS\".\"COSMETICS_TRIGGER_S3_STAGE\""
+          
+          # 4. Schema 
+          terraform import snowflake_schema.cosmetics_schema "COSMETICS_DB_DEV|COSMETICS"
+          
+          # 5. Stages
+          terraform import snowflake_stage.cosmetics_s3_stage "COSMETICS_DB_DEV|COSMETICS|COSMETICS_S3_STAGE"
+          terraform import snowflake_stage.trigger_stage "COSMETICS_DB_DEV|COSMETICS|COSMETICS_TRIGGER_S3_STAGE"
+          
           # 6. Stream 
-          terraform import snowflake_stream_on_directory_table.trigger_stream "\"COSMETICS_DB_DEV\".\"COSMETICS\".\"TRIGGER_S3_FILE_STREAM\""
+          terraform import snowflake_stream_on_directory_table.trigger_stream "COSMETICS_DB_DEV|COSMETICS|TRIGGER_S3_FILE_STREAM"
 
       - name: Terraform Apply
         env:

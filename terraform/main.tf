@@ -6,7 +6,7 @@ resource "snowflake_database" "cosmetics_db" {
 }
 
 # ==========================================
-# 2. 存储集成 (S3 访问权限)
+# 2. 存储集成
 # ==========================================
 resource "snowflake_storage_integration" "s3_int" {
   name                      = "S3_INT_NEW"
@@ -18,7 +18,7 @@ resource "snowflake_storage_integration" "s3_int" {
 }
 
 # ==========================================
-# 3. 外部卷 (Iceberg 存储配置)
+# 3. 外部卷 (Iceberg Volume)
 # ==========================================
 resource "snowflake_external_volume" "cosmetics_volume" {
   name = "COSMETICS_S3_VOLUME"
@@ -32,39 +32,29 @@ resource "snowflake_external_volume" "cosmetics_volume" {
 }
 
 # ==========================================
-# 4. 架构定义 (Schema)
+# 4. 架构 (Schema)
 # ==========================================
 resource "snowflake_schema" "cosmetics_schema" {
   database = snowflake_database.cosmetics_db.name
   name     = "COSMETICS"
 
-  # 显式声明属性，防止与云端现有状态冲突触发 destroy/replace
-  data_retention_time_in_days = 1
-  is_transient               = false
-  with_managed_access        = false
-
+  # 保护数据，防止误删
   lifecycle {
-    prevent_destroy = true # 严禁删除，保护 Schema 下的数据
+    prevent_destroy = true
   }
 }
 
 # ==========================================
 # 5. 阶段 (Stages)
 # ==========================================
-# 主 Stage (存放代码、GE 配置和处理后的数据)
 resource "snowflake_stage" "cosmetics_s3_stage" {
   name                = "COSMETICS_S3_STAGE"
   database            = snowflake_database.cosmetics_db.name
   schema              = snowflake_schema.cosmetics_schema.name
   url                 = "s3://bucket-for-snowflake-projects/cosmetics_etl_project/"
   storage_integration = snowflake_storage_integration.s3_int.name
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
-# 触发器 Stage (专门监控 raw 文件夹)
 resource "snowflake_stage" "trigger_stage" {
   name                = "COSMETICS_TRIGGER_S3_STAGE"
   database            = snowflake_database.cosmetics_db.name
@@ -72,10 +62,6 @@ resource "snowflake_stage" "trigger_stage" {
   url                 = "s3://bucket-for-snowflake-projects/cosmetics_etl_project/raw/"
   storage_integration = snowflake_storage_integration.s3_int.name
   directory           = "ENABLE = TRUE AUTO_REFRESH = TRUE"
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 # ==========================================
@@ -86,7 +72,7 @@ resource "snowflake_stream_on_directory_table" "trigger_stream" {
   database = snowflake_database.cosmetics_db.name
   schema   = snowflake_schema.cosmetics_schema.name
   
-  # 使用全称引用，适配最新的标识符要求
+  # 全称路径引用
   stage    = "\"${snowflake_database.cosmetics_db.name}\".\"${snowflake_schema.cosmetics_schema.name}\".\"${snowflake_stage.trigger_stage.name}\""
   
   comment  = "Stream to monitor new files in the raw stage"
