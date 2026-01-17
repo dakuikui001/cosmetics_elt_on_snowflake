@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
+      # --- 第一阶段：Terraform (打地基：库、Schema、Stage、开关Stream) ---
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
@@ -64,3 +64,34 @@ jobs:
         run: |
           cd terraform
           terraform apply -auto-approve
+
+      # --- 第二阶段：Python Snowpark (建 Iceberg 业务表和表级 Stream) ---
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Snowpark Dependencies
+        run: |
+          pip install snowflake-snowpark-python
+
+      - name: Run Python Infrastructure Setup
+        env:
+          DEPLOY_ENV: "DEV"
+        run: |
+          # 必须进入 infrastructure 目录，以便 setup_tables.py 导入 setup.py
+          cd infrastructure
+          python setup_tables.py
+
+      # --- 第三阶段：SQL (创建 File Format、Pipe、刷新环境) ---
+      - name: Run Infrastructure SQL
+        uses: snowflake-labs/snowflake-action@v1
+        with:
+          account: ${{ env.SNOWFLAKE_ACCOUNT }}
+          user: ${{ env.SNOWFLAKE_USER }}
+          password: ${{ env.SNOWFLAKE_PASSWORD }}
+          role: ${{ env.SNOWFLAKE_ROLE }}
+          warehouse: "COMPUTE_WH"
+          database: "COSMETICS_DB_DEV"
+          schema: "COSMETICS"
+          directory-path: "infrastructure" # 这会执行 create_streams.sql
