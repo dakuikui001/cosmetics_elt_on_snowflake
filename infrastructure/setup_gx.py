@@ -3,6 +3,7 @@ import shutil
 import great_expectations as gx
 import great_expectations.expectations as gxe
 from snowflake.snowpark import Session
+import io
 
 def run_gx_setup():
     # 连接配置
@@ -17,7 +18,8 @@ def run_gx_setup():
     
     # 路径定义
     gx_local_root = "/tmp/gx_configs"
-    gx_stage_path = "@COSMETICS_DB_DEV.COSMETICS.STAGE_COSMETICS_DB_DEV/gx_configs/great_expectations"
+    # 注意：外部 Stage 路径去掉 @ 符号后的前缀处理
+    stage_name = "COSMETICS_DB_DEV.COSMETICS.STAGE_COSMETICS_DB_DEV"
 
     # --- Step 1: 物理清理与本地初始化 ---
     if os.path.exists(gx_local_root):
@@ -25,8 +27,9 @@ def run_gx_setup():
     os.makedirs(gx_local_root, exist_ok=True)
     
     try:
-        session.sql(f"REMOVE {gx_stage_path}").collect()
-        print(f"Cleared Stage: {gx_stage_path}")
+        # 外部 Stage 清理通常需要通过 S3 或直接用 REMOVE (REMOVE 在某些外部 Stage 上也受限，视权限而定)
+        session.sql(f"REMOVE @{stage_name}/gx_configs/great_expectations").collect()
+        print(f"Cleared Stage path: @{stage_name}")
     except:
         pass
 
@@ -63,23 +66,37 @@ def run_gx_setup():
         for exp in expectations:
             suite.add_expectation(exp)
 
-    # --- Step 5: 你的 os.walk 同步逻辑 ---
+    # --- Step 5: 修正上传逻辑 (不再使用 PUT) ---
+    print("\n--- 正在同步配置到外部 Stage (S3) ---")
     count = 0
     for root, dirs, files in os.walk(gx_local_root):
         for file in files:
             local_path = os.path.join(root, file)
             rel_dir = os.path.relpath(root, gx_local_root)
-            target_stage = gx_stage_path if rel_dir == "." else f"{gx_stage_path}/{rel_dir}"
             
-            session.file.put(
-                local_file_name=local_path,
-                stage_location=target_stage,
-                auto_compress=False,
-                overwrite=True
-            )
-            count += 1
-    
-    print(f"🚀 Successfully synced {count} files to S3.")
+            # 构造 S3 内部路径
+            if rel_dir == ".":
+                target_path = f"gx_configs/great_expectations/{file}"
+            else:
+                target_path = f"gx_configs/great_expectations/{rel_dir}/{file}"
+            
+            try:
+                # 读取本地文件内容
+                with open(local_path, "rb") as f:
+                    file_stream = io.BytesIO(f.read())
+                
+                # 使用 upload_stream 绕过 PUT 命令限制
+                session.file.upload_stream(
+                    input_stream=file_stream,
+                    stage_location=f"@{stage_name}",
+                    target_file_name=target_path,
+                    overwrite=True
+                )
+                count += 1
+            except Exception as e:
+                print(f"⚠️ 文件 {file} 上传失败: {str(e)}")
+
+    print(f"🚀 成功通过 Stream 同步了 {count} 个文件到外部 Stage。")
     session.close()
 
 if __name__ == "__main__":
