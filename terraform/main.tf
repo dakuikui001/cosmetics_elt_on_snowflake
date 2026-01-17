@@ -25,10 +25,15 @@ resource "snowflake_external_volume" "cosmetics_volume" {
   }
 }
 
-# 4. 架构
+# 4. 架构 (添加了生命周期保护)
 resource "snowflake_schema" "cosmetics_schema" {
   database = snowflake_database.cosmetics_db.name
   name     = "COSMETICS"
+
+  # 关键：即便以后执行 terraform destroy，也不会删除这个 Schema 及其数据
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # 5. 主 Stage
@@ -56,7 +61,7 @@ resource "snowflake_stream_on_directory_table" "trigger_stream" {
   database = snowflake_database.cosmetics_db.name
   schema   = snowflake_schema.cosmetics_schema.name
   
-  # 使用全称路径
+  # 使用全称路径拼接
   stage    = "\"${snowflake_database.cosmetics_db.name}\".\"${snowflake_schema.cosmetics_schema.name}\".\"${snowflake_stage.trigger_stage.name}\""
   
   comment  = "Stream to monitor new files in the raw stage"
