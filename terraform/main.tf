@@ -38,7 +38,7 @@ resource "snowflake_schema" "cosmetics_schema" {
   database = snowflake_database.cosmetics_db.name
   name     = "COSMETICS"
 
-  # 保护数据，防止误删
+  # 关键保护：防止任何意外情况导致的 Schema 被删除
   lifecycle {
     prevent_destroy = true
   }
@@ -47,6 +47,7 @@ resource "snowflake_schema" "cosmetics_schema" {
 # ==========================================
 # 5. 阶段 (Stages)
 # ==========================================
+# 主 Stage
 resource "snowflake_stage" "cosmetics_s3_stage" {
   name                = "COSMETICS_S3_STAGE"
   database            = snowflake_database.cosmetics_db.name
@@ -55,6 +56,7 @@ resource "snowflake_stage" "cosmetics_s3_stage" {
   storage_integration = snowflake_storage_integration.s3_int.name
 }
 
+# 触发器 Stage
 resource "snowflake_stage" "trigger_stage" {
   name                = "COSMETICS_TRIGGER_S3_STAGE"
   database            = snowflake_database.cosmetics_db.name
@@ -72,7 +74,7 @@ resource "snowflake_stream_on_directory_table" "trigger_stream" {
   database = snowflake_database.cosmetics_db.name
   schema   = snowflake_schema.cosmetics_schema.name
   
-  # 全称路径引用
+  # 全称路径引用，确保 Stream 能够准确绑定到 Stage
   stage    = "\"${snowflake_database.cosmetics_db.name}\".\"${snowflake_schema.cosmetics_schema.name}\".\"${snowflake_stage.trigger_stage.name}\""
   
   comment  = "Stream to monitor new files in the raw stage"
