@@ -13,7 +13,7 @@ resource "snowflake_storage_integration" "s3_int" {
   storage_allowed_locations = ["s3://bucket-for-snowflake-projects/cosmetics_etl_project/"]
 }
 
-# 3. 外部卷 (修复权限与路径匹配)
+# 3. 外部卷 (增加 ignore_changes 以跳过位置冲突)
 resource "snowflake_external_volume" "cosmetics_volume" {
   name         = "COSMETICS_S3_VOLUME"
   allow_writes = "true"
@@ -24,14 +24,18 @@ resource "snowflake_external_volume" "cosmetics_volume" {
     storage_base_url      = "s3://bucket-for-snowflake-projects/cosmetics_etl_project/"
     storage_aws_role_arn  = "arn:aws:iam::040591921557:role/snowflake_access_role_new-volume"
   }
+
+  lifecycle {
+    # 修复核心 1：禁止修改存储位置，防止 Snowflake 报错
+    ignore_changes = [storage_location]
+  }
 }
 
-# 4. 架构 (强制对齐云端所有默认参数，防止 Replacement)
+# 4. 架构 (根据 Warning 清理了 redundant ignore_changes)
 resource "snowflake_schema" "cosmetics_schema" {
   database = snowflake_database.cosmetics_db.name
   name     = "COSMETICS"
 
-  # 关键修复：显式匹配云端抛出的差异参数
   is_transient                  = false
   with_managed_access           = false
   data_retention_time_in_days   = 1
@@ -39,9 +43,7 @@ resource "snowflake_schema" "cosmetics_schema" {
   
   lifecycle {
     prevent_destroy = true
-    # 终极保险：忽略任何其他由 Snowflake 自动生成的微小参数变动
     ignore_changes = [
-      parameters,
       storage_serialization_policy,
       suspend_task_after_num_failures,
       task_auto_retry_attempts,
@@ -53,13 +55,17 @@ resource "snowflake_schema" "cosmetics_schema" {
   }
 }
 
-# 5. 主 Stage
+# 5. 主 Stage (增加 ignore_changes)
 resource "snowflake_stage" "cosmetics_s3_stage" {
   name                = "COSMETICS_S3_STAGE"
   database            = snowflake_database.cosmetics_db.name
   schema              = snowflake_schema.cosmetics_schema.name
   url                 = "s3://bucket-for-snowflake-projects/cosmetics_etl_project/"
   storage_integration = snowflake_storage_integration.s3_int.name
+
+  lifecycle {
+    ignore_changes = [url, storage_integration]
+  }
 }
 
 # 6. 触发器 Stage
@@ -72,7 +78,7 @@ resource "snowflake_stage" "trigger_stage" {
   directory           = "ENABLE = TRUE AUTO_REFRESH = TRUE"
 
   lifecycle {
-    ignore_changes = [directory]
+    ignore_changes = [directory, url, storage_integration]
   }
 }
 
