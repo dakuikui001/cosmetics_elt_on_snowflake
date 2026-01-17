@@ -47,7 +47,7 @@ resource "snowflake_stage" "trigger_stage" {
   url                 = "s3://bucket-for-snowflake-projects/cosmetics_etl_project/raw/"
   storage_integration = snowflake_storage_integration.s3_int.name
   directory           = "ENABLE = TRUE AUTO_REFRESH = TRUE"
-}
+} 
 
 # --- 5. Stream ---
 resource "snowflake_stream_on_directory_table" "trigger_stream" {
