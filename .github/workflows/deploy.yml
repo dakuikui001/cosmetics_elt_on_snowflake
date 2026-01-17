@@ -5,7 +5,6 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# 全局环境变量：在这里定义一次，下方所有 Steps 都可以通过 env.XXX 引用
 env:
   SNOWFLAKE_ACCOUNT: "TMJESFF-ED32433"
   SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
@@ -29,6 +28,8 @@ jobs:
           cd terraform
           terraform init
 
+      # 🔴 关键修正点 1：更新 Smart Import 里的资源名和 ID
+      # 必须匹配你在 main.tf 中定义的新 resource name 和 Snowflake 里的新对象名
       - name: Terraform Smart Import
         continue-on-error: true
         env:
@@ -39,16 +40,18 @@ jobs:
           smart_import() {
             local res=$1; local id=$2
             if ! terraform state list | grep -q "$res"; then
+              echo "Importing $res..."
               terraform import "$res" "$id" || true
             fi
           }
+          # 修正后的导入逻辑
           smart_import "snowflake_database.cosmetics_db" "COSMETICS_DB_DEV"
-          smart_import "snowflake_storage_integration.s3_int" "S3_INT_NEW"
-          smart_import "snowflake_external_volume.cosmetics_volume" "COSMETICS_S3_VOLUME"
+          smart_import "snowflake_storage_integration.s3_int" "INT_S3_COSMETICS_DB_DEV"
+          smart_import "snowflake_external_volume.cosmetics_volume" "VOL_S3_COSMETICS_DB_DEV"
           smart_import "snowflake_schema.cosmetics_schema" "COSMETICS_DB_DEV.COSMETICS"
-          smart_import "snowflake_stage.cosmetics_s3_stage" "COSMETICS_DB_DEV|COSMETICS|COSMETICS_S3_STAGE"
-          smart_import "snowflake_stage.trigger_stage" "COSMETICS_DB_DEV|COSMETICS|COSMETICS_TRIGGER_S3_STAGE"
-          smart_import "snowflake_stream_on_directory_table.trigger_stream" "COSMETICS_DB_DEV.COSMETICS.TRIGGER_S3_FILE_STREAM"
+          smart_import "snowflake_stage.cosmetics_s3_stage" "COSMETICS_DB_DEV|COSMETICS|STAGE_COSMETICS_DB_DEV"
+          smart_import "snowflake_stage.trigger_stage" "COSMETICS_DB_DEV|COSMETICS|STAGE_TRIGGER_COSMETICS_DB_DEV"
+          smart_import "snowflake_stream_on_directory_table.trigger_stream" "COSMETICS_DB_DEV.COSMETICS.STREAM_TRIGGER_COSMETICS_DB_DEV"
 
       - name: Terraform Apply
         env:
@@ -58,7 +61,7 @@ jobs:
           cd terraform
           terraform apply -auto-approve
 
-      # --- 第二阶段：Python Snowpark (修复了环境变量传递) ---
+      # --- 第二阶段：Python Snowpark ---
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -69,7 +72,6 @@ jobs:
 
       - name: Run Python Infrastructure Setup
         env:
-          # 显式将全局 env 映射到此 Step 的环境变量中，防止 NoneType 错误
           SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ env.SNOWFLAKE_USER }}
           SNOWFLAKE_PASSWORD: ${{ env.SNOWFLAKE_PASSWORD }}
@@ -78,7 +80,8 @@ jobs:
           cd infrastructure
           python setup_tables.py
 
-      # --- 第三阶段：SQL (通过 Python 执行，增加了空语句和纯注释过滤) ---
+      # --- 第三阶段：SQL (通过 Python 执行) ---
+      # 🔴 关键修正点 2：这里的 database 和 schema 必须硬编码或引用最新变量
       - name: Run Infrastructure SQL via Python
         env:
           SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
@@ -101,7 +104,6 @@ jobs:
           }).create()
           
           def is_valid_sql(sql):
-              # 移除注释（-- 和 /* */）
               content = re.sub(r'--.*', '', sql)
               content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
               return len(content.strip()) > 0
@@ -109,16 +111,11 @@ jobs:
           try:
               print('🚀 正在执行辅助 SQL 脚本...')
               with open('infrastructure/create_streams.sql', 'r') as f:
-                  # 以分号分割 SQL 语句
                   queries = [q.strip() for q in f.read().split(';') if q.strip()]
-                  
                   for query in queries:
-                      # 关键修复：只有当语句中包含有效 SQL 代码时才执行
                       if is_valid_sql(query):
                           print(f'执行中: {query[:50]}...')
                           session.sql(query).collect()
-                      else:
-                          print('跳过纯注释/空语句段落')
               print('✅ SQL 部署成功！')
           except Exception as e:
               print(f'❌ 执行失败: {str(e)}')

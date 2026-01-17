@@ -4,30 +4,35 @@ from snowflake.snowpark import Session
 class SnowflakeSetupHelper():
     def __init__(self, session: Session, env: str, db_name: str):
         self.session = session
-        # 匹配数据库名习惯：COSMETICS_DB_DEV
+        # 🔴 修正：完全匹配 Terraform 定义的数据库名 COSMETICS_DB_DEV
         self.catalog = f"{db_name.upper()}_DB_{env.upper()}"
         self.db_name = db_name.upper()      
         
-        # 预定义资源 (必须与 Terraform 定义的 Resource Name 一致)
-        self.external_volume = 'COSMETICS_S3_VOLUME'
-        self.stage_name = 'COSMETICS_S3_STAGE'
+        # 🔴 修正：引用重新命名的物理资源，确保 1:1 绑定
+        self.external_volume = f'VOL_S3_{self.catalog}'
+        self.stage_name = f'STAGE_{self.catalog}'
         self.initialized = False
 
     def create_db(self):
         """[Step 1] 确保上下文环境正确"""
-        print(f"--- [Step 1] Ensuring Database & Schema ---")
-        # 数据库和 Schema 由 Terraform 创建，这里做 IF NOT EXISTS 保险处理
+        print(f"--- [Step 1] Setting Context for {self.catalog}.{self.db_name} ---")
+        # 数据库和 Schema 由 Terraform 创建，这里切换上下文并确保存在
         self.session.sql(f"CREATE DATABASE IF NOT EXISTS {self.catalog}").collect()
-        self.session.sql(f"USE DATABASE {self.catalog}").collect()
+        self.session.use_database(self.catalog)
         self.session.sql(f"CREATE SCHEMA IF NOT EXISTS {self.db_name}").collect()
-        self.session.sql(f"USE SCHEMA {self.db_name}").collect()
-        print(f"✓ Context set to {self.catalog}.{self.db_name}")
+        self.session.use_schema(self.db_name)
+        print(f"✓ Current Context: {self.session.get_current_database()}.{self.session.get_current_schema()}")
 
     def _create_iceberg_table(self, table_name, columns_sql, location):
-        """内部方法：创建 Iceberg 表"""
-        print(f"Creating Iceberg table {table_name}...", end='')
+        """内部方法：创建 Iceberg 表 (受管模式)"""
+        # 确保路径以斜杠结尾，否则 S3 目录生成可能不符合预期
+        if not location.endswith('/'):
+            location += '/'
+            
+        print(f"Creating Iceberg table {table_name} at {location}...", end='')
+        # 使用 OR REPLACE 确保基础设施更新（如路径或 Schema 变化）能即时生效
         self.session.sql(f"""
-            CREATE ICEBERG TABLE IF NOT EXISTS {self.catalog}.{self.db_name}.{table_name} (
+            CREATE OR REPLACE ICEBERG TABLE {self.catalog}.{self.db_name}.{table_name} (
                 {columns_sql}
             )
             CATALOG = 'SNOWFLAKE'
@@ -37,39 +42,40 @@ class SnowflakeSetupHelper():
         print("Done")
 
     def _create_stream(self, stream_name, table_name):
-        """内部方法：创建表级 Stream"""
+        """内部方法：创建表级 Stream (用于 Medallion 链路触发)"""
         print(f"Creating Stream {stream_name} on {table_name}...", end='')
         self.session.sql(f"""
-            CREATE STREAM IF NOT EXISTS {self.catalog}.{self.db_name}.{stream_name}
+            CREATE OR REPLACE STREAM {self.catalog}.{self.db_name}.{stream_name}
             ON TABLE {self.catalog}.{self.db_name}.{table_name}
             SHOW_INITIAL_ROWS = TRUE
         """).collect()
         print("Done")
 
     def setup(self):
-        """一键安装所有表和【表级】Stream"""
+        """部署 Medallion 架构所有 Iceberg 对象"""
         start = int(time.time())
-        print(f"\nStarting Snowflake Setup for: {self.catalog}")
+        print(f"\n🚀 Starting Snowflake Rebuild for: {self.catalog}")
         
         self.create_db()
 
-        # 1. Bronze 层：表 + 驱动 Silver 的 Stream
+        # 1. Bronze 层：原始数据快照
+        # 修正：BASE_LOCATION 包含 medallion 前缀以保持 S3 桶整洁
         self._create_iceberg_table(
             "COSMETICS_BZ", 
-            "Label STRING, Brand STRING, Name STRING, Price DOUBLE, Rank DOUBLE, Ingredients STRING, Combination INTEGER, Dry INTEGER, Normal INTEGER, Oily INTEGER, Sensitive INTEGER, load_time TIMESTAMP, source_file STRING", 
-            "medallion/bronze/cosmetics_bz/"
+            "LABEL STRING, BRAND STRING, NAME STRING, PRICE DOUBLE, RANK DOUBLE, INGREDIENTS STRING, COMBINATION INTEGER, DRY INTEGER, NORMAL INTEGER, OILY INTEGER, SENSITIVE INTEGER, LOAD_TIME TIMESTAMP, SOURCE_FILE STRING", 
+            "medallion/bronze/"
         )
         self._create_stream("COSMETICS_BZ_STREAM", "COSMETICS_BZ")
 
-        # 2. Silver 层：表 + 驱动 Gold 的 Stream (补全此处)
+        # 2. Silver 层：清洗过滤层
         self._create_iceberg_table(
             "COSMETICS_SL", 
-            "LABEL STRING, BRAND STRING, NAME STRING, PRICE DOUBLE, RANK DOUBLE, INGREDIENTS STRING, COMBINATION INTEGER, DRY INTEGER, NORMAL INTEGER, OILY INTEGER, SENSITIVE INTEGER, UPDATE_TIME TIMESTAMP", 
-            "medallion/silver/cosmetics_sl/"
+            "LABEL STRING, BRAND STRING, NAME STRING, PRICE DOUBLE, RANK DOUBLE, INGREDIENTS STRING, COMBINATION INTEGER, DRY INTEGER, NORMAL INTEGER, OILY INTEGER, SENSITIVE INTEGER, CLEANSED_TIME TIMESTAMP", 
+            "medallion/silver/"
         )
         self._create_stream("COSMETICS_SL_STREAM", "COSMETICS_SL")
 
-        # 3. Gold 层 (分析维度表)
+        # 3. Gold 层：分析指标表
         gold_tables = {
             "FACT_COSMETICS_GL": "NAME STRING, LABEL STRING, BRAND STRING, PRICE DOUBLE, RANK DOUBLE, INGREDIENTS STRING, UPDATE_TIME TIMESTAMP",
             "DIM_BRAND_GL": "BRAND STRING, UPDATE_TIME TIMESTAMP",
@@ -79,11 +85,11 @@ class SnowflakeSetupHelper():
         for name, ddl in gold_tables.items():
             self._create_iceberg_table(name, ddl, f"medallion/gold/{name.lower()}/")
 
-        # 4. 数据质量隔离表
+        # 4. Data Quality：异常数据隔离表
         self._create_iceberg_table(
             "DATA_QUALITY_QUARANTINE",
-            "table_name STRING, gx_batch_id STRING, violated_rules STRING, raw_data STRING, ingestion_time TIMESTAMP",
-            "gx_configs/data_quality_quarantine/"
+            "TABLE_NAME STRING, GX_BATCH_ID STRING, VIOLATED_RULES STRING, RAW_DATA STRING, INGESTION_TIME TIMESTAMP",
+            "medallion/quarantine/"
         )
 
         print(f"✅ Setup completed in {int(time.time()) - start} seconds")
@@ -93,17 +99,17 @@ class SnowflakeSetupHelper():
         print(f"\n--- Starting Full Physical Cleanup ---")
         full_path = f"{self.catalog}.{self.db_name}"
         
-        # 1. 删除表级 Stream (注意：不要删除 TRIGGER_S3_FILE_STREAM，那是 Terraform 管的)
+        # 1. 删除表级 Stream
         streams = ["COSMETICS_BZ_STREAM", "COSMETICS_SL_STREAM"]
         for s in streams:
-            print(f"Dropping stream {s}...", end='')
+            print(f"Dropping stream {s}... ", end='')
             self.session.sql(f"DROP STREAM IF EXISTS {full_path}.{s}").collect()
             print("Done")
         
         # 2. 删除所有 Iceberg 表
         tables = ["COSMETICS_BZ", "COSMETICS_SL", "FACT_COSMETICS_GL", "DIM_BRAND_GL", "DIM_LABEL_GL", "DIM_ATTRIBUTE_GL", "DATA_QUALITY_QUARANTINE"]
         for t in tables:
-            print(f"Dropping table {t}...", end='')
+            print(f"Dropping table {t}... ", end='')
             self.session.sql(f"DROP TABLE IF EXISTS {full_path}.{t}").collect()
             print("Done")
         
@@ -113,12 +119,12 @@ class SnowflakeSetupHelper():
         """环境验证"""
         print(f"\n--- [Step 3] Validating Environment ---")
         try:
-            self.session.sql(f"USE DATABASE {self.catalog}").collect()
-            # 检查关键表和 Stream 是否存在
+            self.session.use_database(self.catalog)
+            # 检查关键对象
             res = self.session.sql(f"SHOW TABLES IN SCHEMA {self.db_name}").collect()
             stream_res = self.session.sql(f"SHOW STREAMS IN SCHEMA {self.db_name}").collect()
             
-            print(f"✓ Found {len(res)} tables and {len(stream_res)} streams.")
+            print(f"✓ Found {len(res)} tables and {len(stream_res)} streams in {self.catalog}.")
             return True
         except Exception as e:
             print(f"✕ Validation Failed: {e}")
