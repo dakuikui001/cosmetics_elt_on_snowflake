@@ -1,8 +1,16 @@
-name: Snowflake Terraform Deploy
+name: Snowflake Infrastructure Deploy
 
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
+
+# 全局环境变量：在这里定义一次，下方所有 Steps 都可以通过 env.XXX 引用
+env:
+  SNOWFLAKE_ACCOUNT: "TMJESFF-ED32433"
+  SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+  SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+  SNOWFLAKE_ROLE: "ACCOUNTADMIN"
 
 jobs:
   deploy:
@@ -11,7 +19,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-      # --- 第一阶段：Terraform (打地基：库、Schema、Stage、开关Stream) ---
+
+      # --- 第一阶段：Terraform ---
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
@@ -25,65 +34,51 @@ jobs:
         env:
           SNOWFLAKE_ORGANIZATION_NAME: "TMJESFF"
           SNOWFLAKE_ACCOUNT_NAME:      "ED32433"
-          SNOWFLAKE_USER:              ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD:          ${{ secrets.SNOWFLAKE_PASSWORD }}
-          SNOWFLAKE_ROLE:              "ACCOUNTADMIN"
         run: |
           cd terraform
-          
           smart_import() {
             local res=$1; local id=$2
             if ! terraform state list | grep -q "$res"; then
-              echo "--- Importing $res using ID $id ---"
               terraform import "$res" "$id" || true
             fi
           }
-
-          # 1. Database & Integration
           smart_import "snowflake_database.cosmetics_db" "COSMETICS_DB_DEV"
           smart_import "snowflake_storage_integration.s3_int" "S3_INT_NEW"
           smart_import "snowflake_external_volume.cosmetics_volume" "COSMETICS_S3_VOLUME"
-          
-          # 2. Schema 
           smart_import "snowflake_schema.cosmetics_schema" "COSMETICS_DB_DEV.COSMETICS"
-          
-          # 3. Stages 
           smart_import "snowflake_stage.cosmetics_s3_stage" "COSMETICS_DB_DEV|COSMETICS|COSMETICS_S3_STAGE"
           smart_import "snowflake_stage.trigger_stage" "COSMETICS_DB_DEV|COSMETICS|COSMETICS_TRIGGER_S3_STAGE"
-          
-          # 4. Stream 
           smart_import "snowflake_stream_on_directory_table.trigger_stream" "COSMETICS_DB_DEV.COSMETICS.TRIGGER_S3_FILE_STREAM"
 
       - name: Terraform Apply
         env:
           SNOWFLAKE_ORGANIZATION_NAME: "TMJESFF"
           SNOWFLAKE_ACCOUNT_NAME:      "ED32433"
-          SNOWFLAKE_USER:              ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD:          ${{ secrets.SNOWFLAKE_PASSWORD }}
-          SNOWFLAKE_ROLE:              "ACCOUNTADMIN"
         run: |
           cd terraform
           terraform apply -auto-approve
 
-      # --- 第二阶段：Python Snowpark (建 Iceberg 业务表和表级 Stream) ---
+      # --- 第二阶段：Python Snowpark (修复了环境变量传递) ---
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
       - name: Install Snowpark Dependencies
-        run: |
-          pip install snowflake-snowpark-python
+        run: pip install snowflake-snowpark-python
 
       - name: Run Python Infrastructure Setup
         env:
+          # 显式将全局 env 映射到此 Step 的环境变量中，防止 NoneType 错误
+          SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ env.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ env.SNOWFLAKE_PASSWORD }}
           DEPLOY_ENV: "DEV"
         run: |
-          # 必须进入 infrastructure 目录，以便 setup_tables.py 导入 setup.py
           cd infrastructure
           python setup_tables.py
 
-      # --- 第三阶段：SQL (创建 File Format、Pipe、刷新环境) ---
+      # --- 第三阶段：SQL (使用 Python 脚本作为执行器) ---
       - name: Run Infrastructure SQL via Python
         env:
           SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
@@ -94,11 +89,15 @@ jobs:
           import os
           import snowflake.snowpark as snowpark
           
-          # 建立连接
+          # 从环境变量获取，确保不会是 None
+          account = os.getenv('SNOWFLAKE_ACCOUNT')
+          user = os.getenv('SNOWFLAKE_USER')
+          password = os.getenv('SNOWFLAKE_PASSWORD')
+          
           session = snowpark.Session.builder.configs({
-              'account': '${{ env.SNOWFLAKE_ACCOUNT }}',
-              'user': '${{ env.SNOWFLAKE_USER }}',
-              'password': '${{ env.SNOWFLAKE_PASSWORD }}',
+              'account': account,
+              'user': user,
+              'password': password,
               'role': 'ACCOUNTADMIN',
               'warehouse': 'COMPUTE_WH',
               'database': 'COSMETICS_DB_DEV',
@@ -108,8 +107,9 @@ jobs:
           try:
               print('🚀 正在执行辅助 SQL 脚本...')
               with open('infrastructure/create_streams.sql', 'r') as f:
-                  # 以分号分割 SQL 语句，并过滤掉空行
-                  queries = [q.strip() for q in f.read().split(';') if q.strip()]
+                  # 过滤注释并分割语句
+                  raw_content = f.read()
+                  queries = [q.strip() for q in raw_content.split(';') if q.strip()]
                   for query in queries:
                       print(f'执行中: {query[:50]}...')
                       session.sql(query).collect()
