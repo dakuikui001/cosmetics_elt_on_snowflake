@@ -22,16 +22,12 @@ jobs:
 
       - name: Terraform Apply
         env:
-          # 1. 静态定义账号信息（解决 Account 警告）
-          SNOWFLAKE_ORG: "TMJESFF"
-          SNOWFLAKE_ACCOUNT: "ED32433"
-          # 2. 从 Secrets 引用敏感信息
-          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          # 使用 Provider 官方原生支持的环境变量名
+          SNOWFLAKE_ORGANIZATION_NAME: "TMJESFF"
+          SNOWFLAKE_ACCOUNT_NAME:      "ED32433"
+          SNOWFLAKE_USER:              ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY:       ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
         run: |
           cd terraform
-          terraform apply -auto-approve \
-            -var="snowflake_org=$SNOWFLAKE_ORG" \
-            -var="snowflake_account=$SNOWFLAKE_ACCOUNT" \
-            -var="snowflake_user=$SNOWFLAKE_USER" \
-            -var="snowflake_private_key=$SNOWFLAKE_PRIVATE_KEY"
+          # 不再需要手动传递 -var，Provider 会自动读取上面的 env
+          terraform apply -auto-approve
