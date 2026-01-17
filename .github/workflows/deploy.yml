@@ -1,39 +1,37 @@
 name: Snowflake Terraform Deploy
 
-# 触发条件：当你 push 代码到 main 分支时执行
 on:
   push:
     branches: [ main ]
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest # 使用最新的 Ubuntu 虚拟机
+    runs-on: ubuntu-latest
 
     steps:
-      # 1. 下载你的代码到虚拟机上
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. 安装 Terraform 工具
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      # 3. 初始化 Terraform
       - name: Terraform Init
         run: |
           cd terraform
           terraform init
 
-      # 4. 执行部署
       - name: Terraform Apply
         env:
-          # 关键：从 GitHub Secrets 提取你刚才存的“保险箱”内容
-          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          # 1. 静态定义账号信息（解决 Account 警告）
+          SNOWFLAKE_ORG: "TMJESFF"
+          SNOWFLAKE_ACCOUNT: "ED32433"
+          # 2. 从 Secrets 引用敏感信息
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
           SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
         run: |
           cd terraform
           terraform apply -auto-approve \
+            -var="snowflake_org=$SNOWFLAKE_ORG" \
             -var="snowflake_account=$SNOWFLAKE_ACCOUNT" \
             -var="snowflake_user=$SNOWFLAKE_USER" \
             -var="snowflake_private_key=$SNOWFLAKE_PRIVATE_KEY"
