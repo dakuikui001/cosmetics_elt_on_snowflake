@@ -32,27 +32,27 @@ jobs:
           cd terraform
           
           smart_import() {
-            local res=$1
-            local id=$2
-            echo "--- Checking $res ---"
+            local res=$1; local id=$2
             if ! terraform state list | grep -q "$res"; then
-              echo "Importing $id into $res ..."
-              terraform import "$res" "$id" || echo "Import failed for $res"
-            else
-              echo "$res already managed."
+              echo "--- Importing $res using ID $id ---"
+              terraform import "$res" "$id" || true
             fi
           }
 
+          # 1. Database & Integration
           smart_import "snowflake_database.cosmetics_db" "COSMETICS_DB_DEV"
           smart_import "snowflake_storage_integration.s3_int" "S3_INT_NEW"
           smart_import "snowflake_external_volume.cosmetics_volume" "COSMETICS_S3_VOLUME"
           
-          smart_import "snowflake_schema.cosmetics_schema" "COSMETICS_DB_DEV|COSMETICS"
+          # 2. Schema 
+          smart_import "snowflake_schema.cosmetics_schema" "COSMETICS_DB_DEV.COSMETICS"
           
+          # 3. Stages 
           smart_import "snowflake_stage.cosmetics_s3_stage" "COSMETICS_DB_DEV|COSMETICS|COSMETICS_S3_STAGE"
           smart_import "snowflake_stage.trigger_stage" "COSMETICS_DB_DEV|COSMETICS|COSMETICS_TRIGGER_S3_STAGE"
           
-          smart_import "snowflake_stream_on_directory_table.trigger_stream" "COSMETICS_DB_DEV|COSMETICS|TRIGGER_S3_FILE_STREAM"
+          # 4. Stream 
+          smart_import "snowflake_stream_on_directory_table.trigger_stream" "COSMETICS_DB_DEV.COSMETICS.TRIGGER_S3_FILE_STREAM"
 
       - name: Terraform Apply
         env:
