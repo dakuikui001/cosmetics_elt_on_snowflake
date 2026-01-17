@@ -67,4 +67,4 @@ CREATE OR REPLACE PIPE GET_ARN_PIPE
   FROM @STAGE_TRIGGER_COSMETICS_DB_DEV;
 
 -- 部署确认
-SELECT 'SUCCESS' as STATUS, 'All physical infrastructure (Integration, Volume, Stage, Stream) deployed.' as MESSAGE;
+SELECT 'SUCCESS' as STATUS, 'All physical infrastructure (Integration, Volume, Stage, Stream) deployed.' as MESSAGE; 
