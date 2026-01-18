@@ -11,20 +11,24 @@ class SnowparkUpserter:
     def upsert(self, df_incremental):
         session = df_incremental.session
         
-        # 1. 保持原逻辑：微批次内去重
-        window_spec = Window.partition_by(self.join_col).order_by(F.col("LOAD_TIME").desc())
+        # 1. 强制添加别名 "src"，这是解决 "invalid identifier r_0001_..." 的终极方案
+        df_incremental = df_incremental.alias("src")
+        
+        # 在窗口函数中也显式引用 src
+        window_spec = Window.partition_by(F.col("src." + self.join_col)).order_by(F.col("src.LOAD_TIME").desc())
         df_final = df_incremental.with_column("rn", F.row_number().over(window_spec)) \
                                  .filter(F.col("rn") == 1) \
                                  .drop("rn")
 
         affected_rows = df_final.count() 
 
-        # 2. 获取目标表对象
-        target_table = session.table(self.target_table_name)
+        # 2. 获取目标表对象并设置别名 "target"
+        target_table = session.table(self.target_table_name).alias("target")
 
-        # 3. 构造映射
+        # 3. 构造映射 
+        # 🔴 关键修正 1：将 "UPDATE_TIME" 改为 "CLEANSED_TIME" 以对齐 setup.py
         mapping = {col.upper(): df_final[col.upper()] for col in self.biz_columns}
-        mapping["UPDATE_TIME"] = F.current_timestamp()
+        mapping["CLEANSED_TIME"] = F.current_timestamp()
 
         # 4. 执行 Merge
         if affected_rows > 0:
@@ -43,7 +47,7 @@ class Silver:
     def __init__(self, env, session):
         self.session = session
         env_upper = env.upper()
-        # 物理环境对齐
+        # 物理环境对齐：COSMETICS_DB_DEV
         self.catalog = f"COSMETICS_DB_{env_upper}"
         self.schema = "COSMETICS"
     
@@ -70,6 +74,8 @@ class Silver:
         
         # 保持原逻辑：隔离元数据列
         cols_to_keep = upserter_obj.biz_columns + ["LOAD_TIME"]
+        
+        # 🔴 关键修正 2：在交付给 Upserter 前，强制清除所有潜在的 Stream 别名干扰
         df_final_input = df_transformed.select(*cols_to_keep)
 
         return upserter_obj.upsert(df_final_input)
