@@ -49,7 +49,7 @@ def run_gx_setup():
 
     for table_name, expectations in table_rules_mapping.items():
         suite_name = f"{table_name.lower()}_suite"
-        suite = context.suites.add(gx.ExpectationSuite(name=suite_name))
+        suite = context.suites.add_or_update(gx.ExpectationSuite(name=suite_name))
         for exp in expectations:
             suite.add_expectation(exp)
     

@@ -11,6 +11,7 @@ env:
   SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
   SNOWFLAKE_ROLE: "ACCOUNTADMIN"
   SNOWFLAKE_WAREHOUSE: "COMPUTE_WH"
+  S3_PATH: "s3://bucket-for-snowflake-projects/cosmetics_etl_project"
 
 jobs:
   check_changes:
@@ -18,6 +19,7 @@ jobs:
     outputs:
       infra_sql: ${{ steps.filter.outputs.infra_sql }}
       infra_all: ${{ steps.filter.outputs.infra_all }}
+      pipelines: ${{ steps.filter.outputs.pipelines }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -28,6 +30,9 @@ jobs:
               - 'infrastructure/setup_infra.sql'
             infra_all:
               - 'infrastructure/**'
+            pipelines:
+              - 'pipelines/**'
+              - 'orchestration/**'
 
   deploy:
     runs-on: ubuntu-latest
@@ -36,7 +41,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # --- 第一阶段：Terraform ---
+      # --- 1. Terraform 阶段 ---
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
@@ -47,30 +52,24 @@ jobs:
         run: |
           cd terraform
           terraform init
-          # 修正：使用转义符处理标识符
           terraform import snowflake_database.cosmetics_db COSMETICS_DB_DEV || true
           terraform import snowflake_schema.cosmetics_schema "\"COSMETICS_DB_DEV\".\"COSMETICS\"" || true
           terraform apply -auto-approve
 
-      # --- 第二阶段：Python 环境准备 ---
+      # --- 2. Python 环境准备 ---
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install Dependencies
         run: |
-          pip install snowflake-snowpark-python
-          # 🔴 严格执行你要求的 1.10.0 版本
+          pip install snowflake-snowpark-python pandas
           pip install great-expectations==1.10.0
 
-      # --- 第三阶段：执行基础设施 SQL (仅当 setup_infra.sql 变动时) ---
+      # --- 3. 执行物理层基础设施 SQL (Storage Integration, External Stage 等) ---
       - name: Run Physical Infrastructure SQL
         if: needs.check_changes.outputs.infra_sql == 'true' || github.event_name == 'workflow_dispatch'
-        env:
-          SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_USER: ${{ env.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ env.SNOWFLAKE_PASSWORD }}
         run: |
           python -c "
           import os, re
@@ -79,7 +78,7 @@ jobs:
               'account': '${{ env.SNOWFLAKE_ACCOUNT }}',
               'user': '${{ env.SNOWFLAKE_USER }}',
               'password': '${{ env.SNOWFLAKE_PASSWORD }}',
-              'role': 'ACCOUNTADMIN'
+              'role': '${{ env.SNOWFLAKE_ROLE }}'
           }).create()
           
           def is_valid_sql(sql):
@@ -95,7 +94,7 @@ jobs:
                   for query in queries:
                       if is_valid_sql(query):
                           session.sql(query).collect()
-              print('✅ 物理层部署成功！')
+              print('✅ 物理层 SQL 执行成功！')
           except Exception as e:
               print(f'❌ 执行失败: {str(e)}')
               exit(1)
@@ -103,39 +102,57 @@ jobs:
               session.close()
           "
 
-      # --- 第四阶段：运行 Table & Stream Setup ---
+      # --- 4. 运行 Table & Stream Setup (逻辑层表结构) ---
       - name: Run Table & Stream Setup
         if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
         env:
-          SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_USER: ${{ env.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ env.SNOWFLAKE_PASSWORD }}
           DEPLOY_ENV: "DEV"
-        run: |
-          # 修正：直接运行路径下的脚本
-          python infrastructure/setup_tables.py
+        run: python infrastructure/setup_tables.py
 
-      # --- 第五阶段：运行 GX Setup (生成本地文件) ---
-      - name: Generate GX Configs Locally
-        if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
-        env:
-          SNOWFLAKE_ACCOUNT: ${{ env.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_USER: ${{ env.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-          SNOWFLAKE_WAREHOUSE: ${{ env.SNOWFLAKE_WAREHOUSE }}
-        run: python infrastructure/setup_gx.py
-
-      # --- 第六阶段：配置 AWS 凭证 ---
+      # --- 5. 配置 AWS 凭证 ---
       - name: Configure AWS Credentials
-        if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-southeast-1
 
-      # --- 第七阶段：同步到 S3 ---
-      - name: Sync GX Configs to S3
+      # --- 6. 生成并同步 GX Configs (JSON 规则文件) ---
+      - name: Generate and Sync GX Configs
         if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
         run: |
-          aws s3 sync /tmp/gx_configs s3://bucket-for-snowflake-projects/cosmetics_etl_project/gx_configs/great_expectations/ --delete
+          python infrastructure/setup_gx.py
+          aws s3 sync /tmp/gx_configs ${{ env.S3_PATH }}/gx_configs/great_expectations/ --delete
+
+      # --- 7. 同步 Python 业务逻辑代码 ---
+      - name: Sync Pipeline Code to S3
+        if: needs.check_changes.outputs.pipelines == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          aws s3 sync ./pipelines ${{ env.S3_PATH }}/python_code/ --delete
+
+      # --- 8. 注册存储过程并启动 Task (DAG 编排) ---
+      - name: Deploy Snowflake DAG
+        if: needs.check_changes.outputs.pipelines == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          python -c "
+          import snowflake.snowpark as snowpark
+          session = snowpark.Session.builder.configs({
+              'account': '${{ env.SNOWFLAKE_ACCOUNT }}',
+              'user': '${{ env.SNOWFLAKE_USER }}',
+              'password': '${{ env.SNOWFLAKE_PASSWORD }}',
+              'role': '${{ env.SNOWFLAKE_ROLE }}',
+              'warehouse': '${{ env.SNOWFLAKE_WAREHOUSE }}',
+              'database': 'COSMETICS_DB_DEV',
+              'schema': 'COSMETICS'
+          }).create()
+          try:
+              print('🚀 正在部署 DAG (Procedures & Tasks)...')
+              with open('orchestration/deploy_dags.sql', 'r') as f:
+                  queries = [q.strip() for q in f.read().split(';') if q.strip()]
+                  for query in queries:
+                      if query:
+                          session.sql(query).collect()
+              print('✅ DAG 部署与 Task 启动成功！')
+          finally:
+              session.close()
+          "
