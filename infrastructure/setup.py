@@ -26,6 +26,7 @@ class SnowflakeSetupHelper():
     def _create_iceberg_table(self, table_name, columns_sql, location):
         """
         内部方法：创建 Iceberg 表并激活变更追踪
+        修正点：针对 Iceberg 表使用 ALTER ICEBERG TABLE 语法
         """
         if not location.endswith('/'):
             location += '/'
@@ -43,9 +44,10 @@ class SnowflakeSetupHelper():
             COMMENT = 'Managed Iceberg Table in Medallion Architecture'
         """).collect()
 
-        # 🔴 核心修正点：显式激活 CHANGE_TRACKING
-        # 必须先开启此属性，Stream 才能捕获 DML (insert_into) 操作
-        self.session.sql(f"ALTER TABLE {self.catalog}.{self.db_name}.{table_name} SET CHANGE_TRACKING = TRUE").collect()
+        # 🔴 关键修复：Iceberg 专属语法
+        # 必须使用 ALTER ICEBERG TABLE 否则会报 091367 (42601) 错误
+        print(f" Activating Change Tracking for {table_name}...", end='')
+        self.session.sql(f"ALTER ICEBERG TABLE {self.catalog}.{self.db_name}.{table_name} SET CHANGE_TRACKING = TRUE").collect()
         
         print("Done (Change Tracking Enabled)")
 
