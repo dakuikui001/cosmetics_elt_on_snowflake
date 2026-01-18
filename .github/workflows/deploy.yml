@@ -65,7 +65,7 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install snowflake-snowpark-python pandas
-          pip install great-expectations==1.10.0
+          pip install great-expectations==1.8.0
 
       # --- 3. 执行物理层基础设施 SQL (Storage Integration, External Stage 等) ---
       - name: Run Physical Infrastructure SQL
