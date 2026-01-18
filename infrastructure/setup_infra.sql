@@ -8,7 +8,7 @@
 
 -- 1. 环境初始化 (前提：Terraform 已创建 DB 和 SCHEMA)
 USE DATABASE COSMETICS_DB_DEV;
-USE SCHEMA COSMETICS;
+USE SCHEMA COSMETICS; 
 
 -- 2. 创建存储集成 (与 S3 通信的 IAM 凭证)
 -- 🔴 关键修正：使用 IF NOT EXISTS。

@@ -14,27 +14,25 @@ class Upserter:
         self.insert_cols = insert_cols  
 
     def upsert(self, df_batch, batch_id):
-        """执行原生 Merge，解决标识符冲突和布尔转换问题"""
+        """保持原逻辑：执行原生 Merge，解决标识符冲突"""
         
-        # 1. 批次内强力去重：防止 Merge 因为 Key 重复而崩溃
+        # 1. 强力去重：防止 Key 重复导致 Merge 失败
         df_source = df_batch.drop_duplicates(self.join_cols)
         
         # 2. 获取目标表
         target_table = df_batch.session.table(self.target_table_path)
         
-        # 3. 给源和目标起别名，彻底解决 "r_0001_NAME" 找不到的问题
+        # 3. 使用别名保护列名
         s = df_source.alias("s")
         t = target_table.alias("t")
         
-        # 4. 构造 Join 条件 (使用别名引用)
+        # 4. 构造 Join 条件
         join_condition = None
         for col in self.join_cols:
-            # 🔴 修正：列名强制大写
             cond = (t[col.upper()] == s[col.upper()])
             join_condition = (join_condition & cond) if join_condition is not None else cond
 
-        # 5. 构造映射字典：显式指向别名后的源列
-        # 🔴 修正：Key 和 Value 均使用大写，确保 Snowflake 识别
+        # 5. 构造大写映射
         update_map = {col.upper(): s[col.upper()] for col in self.update_cols}
         insert_map = {col.upper(): s[col.upper()] for col in self.insert_cols}
 
@@ -60,11 +58,10 @@ class Gold():
     def __init__(self, env, session):
         self.session = session
         self.env = env.upper()
-        # 🔴 修正：对齐新的数据库命名格式 COSMETICS_DB_DEV
+        # 🔴 物理路径对齐
         self.catalog = f"COSMETICS_DB_{self.env}"
         self.schema = "COSMETICS"
         
-        # 来源 Stream 和目标表全路径
         self.sl_stream = f"{self.catalog}.{self.schema}.COSMETICS_SL_STREAM"
         self.fact_table = f"{self.catalog}.{self.schema}.FACT_COSMETICS_GL"
         self.dim_brand = f"{self.catalog}.{self.schema}.DIM_BRAND_GL"
@@ -72,7 +69,7 @@ class Gold():
         self.dim_attr = f"{self.catalog}.{self.schema}.DIM_ATTRIBUTE_GL"
 
     def _init_upserters(self):
-        """初始化 Upserter"""
+        """保持原逻辑：初始化 Upserter 列表"""
         self.fact_upserter = Upserter(
             self.fact_table, ["NAME"],
             ["LABEL", "BRAND", "PRICE", "RANK", "INGREDIENTS", "UPDATE_TIME"],
@@ -89,41 +86,39 @@ class Gold():
         )
 
     def process_incremental(self):
-        """执行增量加工逻辑"""
-        print(f"🚀 [{datetime.now()}] 启动 Gold 增量任务 (Native Alias Mode)... 环境: {self.catalog}")
+        print(f"🚀 [{datetime.now()}] 启动 Gold 增量任务... 环境: {self.catalog}")
         start_time = time.time()
         self._init_upserters()
 
-        # 1. 读取 Stream
         df_stream = self.session.table(self.sl_stream)
         
-        # 检查是否有数据（使用 limit(1) 优化性能）
+        # 快速检查是否有数据
         if len(df_stream.limit(1).collect()) == 0:
             print("💡 Silver 无新变更，结束。")
             return 0
 
-        # 2. 提取 INSERT 状态并缓存
+        # 提取增量行
         df_changes = df_stream.filter(F.col("METADATA$ACTION") == "INSERT").cache_result()
         curr_time = F.current_timestamp()
 
         try:
-            # --- 加工 FACT ---
+            # 1. FACT 表加工
             fact_df = df_changes.select("NAME", "LABEL", "BRAND", "PRICE", "RANK", "INGREDIENTS") \
                                 .filter(F.col("NAME").is_not_null()) \
                                 .with_column("UPDATE_TIME", curr_time)
             self.fact_upserter.upsert(fact_df, "fact")
 
-            # --- 加工 BRAND ---
+            # 2. BRAND 维度
             brand_df = df_changes.select("BRAND").distinct().filter(F.col("BRAND").is_not_null()) \
                                  .with_column("UPDATE_TIME", curr_time)
             self.brand_upserter.upsert(brand_df, "brand")
 
-            # --- 加工 LABEL ---
+            # 3. LABEL 维度
             label_df = df_changes.select("LABEL").distinct().filter(F.col("LABEL").is_not_null()) \
                                  .with_column("UPDATE_TIME", curr_time)
             self.label_upserter.upsert(label_df, "label")
 
-            # --- 加工 ATTRIBUTE (Unpivot) ---
+            # 4. ATTRIBUTE 维度 (Unpivot 逻辑)
             attr_cols = ["COMBINATION", "DRY", "NORMAL", "OILY", "SENSITIVE"]
             unpivoted = df_changes.select("NAME", *attr_cols).unpivot("VAL", "ATTRIBUTE", attr_cols)
             
@@ -145,5 +140,5 @@ class Gold():
             raise e
 
     def consume(self):
-        """统一 Handler 入口，适配 main_pipeline.py"""
+        """统一 Handler 入口"""
         return self.process_incremental()

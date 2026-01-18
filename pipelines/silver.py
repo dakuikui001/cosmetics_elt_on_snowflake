@@ -11,7 +11,7 @@ class SnowparkUpserter:
     def upsert(self, df_incremental):
         session = df_incremental.session
         
-        # 1. 微批次内去重 (根据业务主键和加载时间取最新)
+        # 1. 保持原逻辑：微批次内去重
         window_spec = Window.partition_by(self.join_col).order_by(F.col("LOAD_TIME").desc())
         df_final = df_incremental.with_column("rn", F.row_number().over(window_spec)) \
                                  .filter(F.col("rn") == 1) \
@@ -22,7 +22,7 @@ class SnowparkUpserter:
         # 2. 获取目标表对象
         target_table = session.table(self.target_table_name)
 
-        # 3. 构造映射 (确保列名大写以匹配 Snowflake 习惯)
+        # 3. 构造映射
         mapping = {col.upper(): df_final[col.upper()] for col in self.biz_columns}
         mapping["UPDATE_TIME"] = F.current_timestamp()
 
@@ -43,16 +43,16 @@ class Silver:
     def __init__(self, env, session):
         self.session = session
         env_upper = env.upper()
-        # 🔴 修正：对齐新的数据库命名格式 COSMETICS_DB_DEV
+        # 物理环境对齐
         self.catalog = f"COSMETICS_DB_{env_upper}"
         self.schema = "COSMETICS"
     
     def preprocessing(self, df):
-        """基础清洗"""
+        """保持原逻辑：基础清洗"""
         return df.fillna('Unknown').fillna(0)
 
     def _run_process(self, stream_name, upserter_obj, transform_func):
-        # 🔴 修正：Stream 名字需要补全数据库前缀，确保存储过程能跨 Schema 识别
+        # 路径补全增强
         full_stream_name = f"{self.catalog}.{self.schema}.{stream_name}"
         print(f"📡 扫描增量 Stream: {full_stream_name}...")
         
@@ -61,13 +61,14 @@ class Silver:
         # 只处理 INSERT 动作的数据
         df_new = df_stream.filter(F.col("METADATA$ACTION") == "INSERT")
         
+        # 保持原逻辑：性能检查
         if len(df_new.limit(1).collect()) == 0:
             print("☕ 无增量数据。")
             return 0
 
         df_transformed = transform_func(df_new)
         
-        # 只保留业务列和 LOAD_TIME，彻底隔离元数据列对 Merge 的干扰
+        # 保持原逻辑：隔离元数据列
         cols_to_keep = upserter_obj.biz_columns + ["LOAD_TIME"]
         df_final_input = df_transformed.select(*cols_to_keep)
 
@@ -94,7 +95,7 @@ class Silver:
             )
 
         return self._run_process(
-            stream_name="COSMETICS_BZ_STREAM", # 这里的名字会被 _run_process 补全
+            stream_name="COSMETICS_BZ_STREAM", 
             upserter_obj=upserter,
             transform_func=transform
         )

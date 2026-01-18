@@ -9,18 +9,21 @@ class Bronze():
         self.session = session
         env_upper = env.upper()
         
-        # 🔴 对齐最新的数据库命名格式 (例如: COSMETICS_DB_DEV)
+        # 1. 物理数据库名对齐 (COSMETICS_DB_DEV)
         self.env_db = f"COSMETICS_DB_{env_upper}"
         
-        # 🔴 对齐最新的 Stage 命名格式 (例如: STAGE_COSMETICS_DB_DEV)
+        # 2. 物理 Stage 名对齐 (STAGE_COSMETICS_DB_DEV)
+        # 注意：这里必须和 setup_infra.sql 中的名字一致
         self.stage_name = f"@{self.env_db}.COSMETICS.STAGE_{self.env_db}"
         
         self.landing_path = "raw"
-        # Stream 的全路径，用于最后的强制消费
-        self.stage_stream = f"{self.env_db}.COSMETICS.TRIGGER_S3_FILE_STREAM"
+        
+        # 3. 物理 Stream 名对齐 (STREAM_TRIGGER_COSMETICS_DB_DEV)
+        # 🔴 这是解决“循环触发”和“不消费”的关键
+        self.stage_stream = f"{self.env_db}.COSMETICS.STREAM_TRIGGER_COSMETICS_DB_DEV"
         
     def _get_new_files(self, table_name, pattern):
-        """获取 Stage 上尚未入库的新文件"""
+        """保持原逻辑：通过 LIST 获取尚未入库的文件"""
         files_on_stage = self.session.sql(f"LIST {self.stage_name}/{self.landing_path}").collect()
         
         all_files = [f['name'].split('/')[-1] for f in files_on_stage 
@@ -38,8 +41,8 @@ class Bronze():
 
     def _force_consume_stream(self):
         """
-        强制消费 Stream 偏移量。
-        解决 Snowflake Stream 在遇到不支持的文件格式或逻辑跳过时无法自动推进的问题。
+        保持原逻辑：强制消费 Stream 偏移量。
+        使用 WHERE 1=0 触发 Snowflake Stream 指针移动。
         """
         print(f"🔄 正在强制消费 Stream ({self.stage_stream})...")
         
@@ -57,7 +60,7 @@ class Bronze():
             print(f"⚠️ 强制消费 Stream 失败: {str(e)}")
 
     def _read_and_process_incremental(self, schema_str, file_pattern, table_name):
-        """核心处理逻辑：读取 CSV -> GX 校验 -> 写入 Iceberg 表"""
+        """保持原逻辑：核心处理逻辑"""
         print(f"\n--- 开始处理表: {table_name} ---")
         
         new_files = self._get_new_files(table_name, file_pattern)
@@ -67,7 +70,6 @@ class Bronze():
             return
 
         print(f"📂 匹配到 {len(new_files)} 个新文件: {new_files}")
-        # 构造正则表达式，仅读取本次检测到的新文件
         regex_pattern = f".*({'|'.join([re.escape(f) for f in new_files])}).*"
 
         try:
@@ -92,12 +94,11 @@ class Bronze():
 
             df = self.session.sql(sql_query)
             
-            # 调用 Great Expectations 校验逻辑
+            # 保持原逻辑：调用 GX 校验
             batch_id = int(time.time())
-            # 注意：gec 内部会处理数据分流（合格入正式表，不合格入隔离表）
             gec.validate_and_insert_process_batch(df=df, batch_id=batch_id, table_name=table_name)
             
-            # 成功处理后，清空 Stream 记录，防止 Task 循环触发
+            # 处理后清空 Stream，防止 Task 循环
             self._force_consume_stream()
             print(f"🚀 {table_name}: 增量加载及校验成功完成。")
 
@@ -107,27 +108,24 @@ class Bronze():
             print(traceback.format_exc())
             
     def consume_cosmetics_bz(self):
-        """化妆品原始数据 Schema 定义"""
         schema = "Label STRING, Brand STRING, Name STRING, Price DOUBLE, Rank DOUBLE, Ingredients STRING, Combination INT, Dry INT, Normal INT, Oily INT, Sensitive INT"
         self._read_and_process_incremental(schema, "cosmetics", "COSMETICS_BZ")
 
     def consume(self):
-        """主入口：先同步 GX 规则，再执行数据加工"""
+        """保持原逻辑：同步 GX 规则并执行"""
         start = int(time.time())
         print(f"\n--- Starting Bronze Layer Processing ---")
         
-        # 1. 准备本地配置目录
         local_dir = "/tmp/gx_configs/expectations"
         os.makedirs(local_dir, exist_ok=True)
         
-        # 🔴 修正：动态获取当前环境的完整 Stage 路径
+        # 🔴 动态获取 Stage 路径 (对齐最新物理环境)
         stage_name_full = f"{self.env_db}.COSMETICS.STAGE_{self.env_db}"
         relative_path = "gx_configs/great_expectations/expectations"
         
         print(f"📥 正在从 S3 Stage (@{stage_name_full}) 同步校验规则...")
         
         try:
-            # 获取 S3 上的所有 JSON 规则文件
             files_df = self.session.sql(f"LIST @{stage_name_full}/{relative_path}").collect()
             for file_info in files_df:
                 full_s3_path = file_info['name'] 
@@ -136,12 +134,10 @@ class Bronze():
                 pure_file_name = full_s3_path.split('/')[-1]
                 snowflake_path = f"@{stage_name_full}/{relative_path}/{pure_file_name}"
                 
-                # 将 S3 上的规则文件流式下载到存储过程的本地 /tmp 目录
                 input_stream = self.session.file.get_stream(snowflake_path)
                 with open(os.path.join(local_dir, pure_file_name), "wb") as f:
                     f.write(input_stream.read())
             
-            # 通知公共模块规则已就绪
             gec.BASE_PATH = local_dir
             gec.preload_all_suites()
             print(f"✅ 校验规则加载完成。")
@@ -149,6 +145,5 @@ class Bronze():
         except Exception as e:
             print(f"⚠️ 同步规则告警 (可能 S3 为空): {str(e)}")
 
-        # 2. 执行主业务逻辑
         self.consume_cosmetics_bz()
         print(f"--- Completed Bronze Layer: {int(time.time()) - start} seconds ---")
