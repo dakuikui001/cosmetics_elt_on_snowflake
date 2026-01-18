@@ -19,6 +19,10 @@ This project implements a modern ELT (Extract, Load, Transform) data pipeline fo
 
 ![Project Architecture](Project%20Architechture.png)
 
+## Report Sample
+
+![Sample Dashboard](report/sample/dashboard.png)
+
 The architecture follows a medallion pattern with:
 - **S3** as the source data lake
 - **Snowflake** as the data warehouse platform
@@ -201,6 +205,4 @@ on:
         └── dashboard.png         # Dashboard screenshot
 ```
 
-## Report Sample
 
-![Sample Dashboard](report/sample/dashboard.png)
