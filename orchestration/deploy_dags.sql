@@ -1,3 +1,8 @@
+/********************************************************************************
+  文件：orchestration/deploy_dags.sql
+  功能：注册存储过程并基于物理基础设施编排 Task DAG
+********************************************************************************/
+
 -- =====================================================
 -- 1. 环境上下文设置
 -- =====================================================
@@ -14,7 +19,6 @@ CREATE OR REPLACE PROCEDURE RUN_BRONZE_PROC(env STRING)
 RETURNS STRING
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.11'
--- 🔴 已修正：使用 Snowflake Anaconda 频道支持的 1.8.0 版本
 PACKAGES = ('snowflake-snowpark-python', 'pandas', 'great-expectations==1.8.0')
 IMPORTS = (
     '@COSMETICS_DB_DEV.COSMETICS.STAGE_COSMETICS_DB_DEV/python_code/bronze.py', 
@@ -35,7 +39,7 @@ IMPORTS = (
 )
 HANDLER = 'main_pipeline.run_silver_step';
 
--- 注册 Gold 过程 (指标加工与 Unpivot)
+-- 注册 Gold 过程 (指标加工与 Fact 表合并)
 CREATE OR REPLACE PROCEDURE RUN_GOLD_PROC(env STRING)
 RETURNS STRING
 LANGUAGE PYTHON
@@ -48,15 +52,15 @@ IMPORTS = (
 HANDLER = 'main_pipeline.run_gold_step';
 
 -- =====================================================
--- 3. 定义调度任务 (Tasks) - 串联 DAG
+-- 3. 定义调度任务 (Tasks) - 严格对齐 setup_infra.sql
 -- =====================================================
 
--- 根任务：监控 S3 外部表产生的 Stream
+-- 根任务：监控 S3 目录 Stage 的变动 Stream
 CREATE OR REPLACE TASK BRONZE_TASK
     WAREHOUSE = 'COMPUTE_WH'
     SCHEDULE = '5 MINUTE'
-    -- 只有当 S3 有新文件时才触发
-    WHEN SYSTEM$STREAM_HAS_DATA('COSMETICS_DB_DEV.COSMETICS.TRIGGER_S3_FILE_STREAM')
+    -- 🔴 修正：对齐 setup_infra.sql 中的 STREAM_TRIGGER_COSMETICS_DB_DEV
+    WHEN SYSTEM$STREAM_HAS_DATA('COSMETICS_DB_DEV.COSMETICS.STREAM_TRIGGER_COSMETICS_DB_DEV')
 AS
     CALL RUN_BRONZE_PROC('DEV');
 
@@ -64,6 +68,7 @@ AS
 CREATE OR REPLACE TASK SILVER_TASK
     WAREHOUSE = 'COMPUTE_WH'
     AFTER BRONZE_TASK
+    -- 🔴 确保此 Stream 已经在 setup_tables.py 中创建
     WHEN SYSTEM$STREAM_HAS_DATA('COSMETICS_DB_DEV.COSMETICS.COSMETICS_BZ_STREAM')
 AS
     CALL RUN_SILVER_PROC('DEV');
@@ -72,6 +77,7 @@ AS
 CREATE OR REPLACE TASK GOLD_TASK
     WAREHOUSE = 'COMPUTE_WH'
     AFTER SILVER_TASK
+    -- 🔴 确保此 Stream 已经在 setup_tables.py 中创建
     WHEN SYSTEM$STREAM_HAS_DATA('COSMETICS_DB_DEV.COSMETICS.COSMETICS_SL_STREAM')
 AS
     CALL RUN_GOLD_PROC('DEV');
@@ -79,6 +85,12 @@ AS
 -- =====================================================
 -- 4. 激活任务流 (必须从叶子到根开启)
 -- =====================================================
+-- 激活前先暂停，确保更新应用
+ALTER TASK IF EXISTS GOLD_TASK SUSPEND;
+ALTER TASK IF EXISTS SILVER_TASK SUSPEND;
+ALTER TASK IF EXISTS BRONZE_TASK SUSPEND;
+
+-- 启动任务链
 ALTER TASK GOLD_TASK RESUME;
 ALTER TASK SILVER_TASK RESUME;
 ALTER TASK BRONZE_TASK RESUME;
