@@ -4,9 +4,9 @@ This document provides a comprehensive overview of all database tables, streams,
 
 ## Database and Schema
 
-- **Database**: `COSMETICS_DEV_DB` (or `COSMETICS_{ENV}_DB` for different environments)
+- **Database**: `COSMETICS_DB_DEV` (or `COSMETICS_DB_{ENV}` for different environments, format: `{DB_NAME}_DB_{ENV}`)
 - **Schema**: `COSMETICS`
-- **Table Type**: All tables are **Iceberg Tables** stored in Snowflake with external volume `COSMETICS_S3_VOLUME`
+- **Table Type**: All tables are **Iceberg Tables** stored in Snowflake with external volume `VOL_S3_COSMETICS_DB_DEV` (format: `VOL_S3_{DB_NAME}_DB_{ENV}`)
 
 ---
 
@@ -49,7 +49,7 @@ This document provides a comprehensive overview of all database tables, streams,
 **Purpose**: Isolation table for records that fail data quality validation checks.
 
 **Table Type**: Iceberg Table  
-**Base Location**: `gx_configs/data_quality_quarantine/`
+**Base Location**: `medallion/quarantine/data_quality_quarantine/`
 
 | Column Name | Data Type | Nullable | Description |
 |------------|-----------|----------|-------------|
@@ -88,7 +88,7 @@ This document provides a comprehensive overview of all database tables, streams,
 | NORMAL | INTEGER | Yes | Flag for normal skin suitability (0 or 1) |
 | OILY | INTEGER | Yes | Flag for oily skin suitability (0 or 1) |
 | SENSITIVE | INTEGER | Yes | Flag for sensitive skin suitability (0 or 1) |
-| UPDATE_TIME | TIMESTAMP | No | Timestamp when the record was last updated in Silver layer |
+| CLEANSED_TIME | TIMESTAMP | No | Timestamp when the record was last updated in Silver layer |
 
 **Notes**:
 - Data is incrementally processed from `COSMETICS_BZ_STREAM` (only new/changed records)
@@ -226,17 +226,18 @@ This document provides a comprehensive overview of all database tables, streams,
 
 ---
 
-### 10. TRIGGER_S3_FILE_STREAM
+### 10. STREAM_TRIGGER_COSMETICS_DB_DEV
 
 **Purpose**: Stream on S3 stage directory to detect new file arrivals for pipeline triggering.
 
 **Type**: Stream on Stage  
-**Source Stage**: `COSMETICS_TRIGGER_S3_STAGE` (points to `s3://bucket-for-huilu/cosmetics_project/raw/`)
+**Source Stage**: `STAGE_TRIGGER_COSMETICS_DB_DEV` (points to `s3://bucket-for-snowflake-projects/cosmetics_etl_project/raw/`)
 
 **Notes**:
 - Monitors the `raw/` directory in S3 for new CSV files
-- Used by `BRONZE_TASK` with `SYSTEM$STREAM_HAS_DATA()` function to trigger pipeline execution
+- Used by `BRONZE_TASK` with `SYSTEM$STREAM_HAS_DATA('COSMETICS_DB_DEV.COSMETICS.STREAM_TRIGGER_COSMETICS_DB_DEV')` function to trigger pipeline execution
 - Enables event-driven orchestration of the Bronze layer processing
+- Stream name format: `STREAM_TRIGGER_{DB_NAME}_DB_{ENV}` (matches infrastructure naming convention)
 
 ---
 
@@ -285,4 +286,4 @@ Invalid Data → DATA_QUALITY_QUARANTINE
 - Streams must be consumed to advance offsets; unused streams can cause storage growth
 - Quarantine table should be periodically reviewed and cleaned
 - Gold layer dimension tables are automatically maintained via merge operations
-- Table locations in S3 are managed through the external volume `COSMETICS_S3_VOLUME`
+- Table locations in S3 are managed through the external volume `VOL_S3_COSMETICS_DB_DEV` (format: `VOL_S3_{DB_NAME}_DB_{ENV}`)
