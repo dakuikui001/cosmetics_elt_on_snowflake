@@ -9,11 +9,11 @@ class Bronze():
         self.session = session
         env_upper = env.upper()
         
-        # 1. 物理数据库名对齐 (COSMETICS_DB_DEV)
+        # 1. Physical database name alignment (COSMETICS_DB_DEV)
         self.env_db = f"COSMETICS_DB_{env_upper}"
         
-        # 2. 物理 Stage 名对齐 (STAGE_COSMETICS_DB_DEV)
-        # 注意：这里必须和 setup_infra.sql 中的名字一致
+        # 2. Physical Stage name alignment (STAGE_COSMETICS_DB_DEV)
+        # Note: This must match the name in setup_infra.sql
         self.stage_name = f"@{self.env_db}.COSMETICS.STAGE_{self.env_db}"
         
         self.landing_path = "raw"
@@ -23,14 +23,14 @@ class Bronze():
         self.stage_stream = f"{self.env_db}.COSMETICS.STREAM_TRIGGER_COSMETICS_DB_DEV"
         
     def _get_new_files(self, table_name, pattern):
-        """保持原逻辑：通过 LIST 获取尚未入库的文件"""
+        """Keep original logic: Get files not yet loaded via LIST"""
         files_on_stage = self.session.sql(f"LIST {self.stage_name}/{self.landing_path}").collect()
         
         all_files = [f['name'].split('/')[-1] for f in files_on_stage 
                      if f['name'].split('/')[-1].startswith(pattern) and f['name'].endswith('.csv')]
         
         try:
-            # 检查已入库的文件，防止重复加载
+            # Check already loaded files to prevent duplicate loading
             processed_df = self.session.table(f"{self.env_db}.COSMETICS.{table_name}").select("SOURCE_FILE").distinct()
             processed_files = {row.SOURCE_FILE for row in processed_df.to_local_iterator()}
         except Exception:
@@ -41,10 +41,10 @@ class Bronze():
 
     def _force_consume_stream(self):
         """
-        保持原逻辑：强制消费 Stream 偏移量。
-        使用 WHERE 1=0 触发 Snowflake Stream 指针移动。
+        Keep original logic: Force consume Stream offset.
+        Use WHERE 1=0 to trigger Snowflake Stream pointer movement.
         """
-        print(f"🔄 正在强制消费 Stream ({self.stage_stream})...")
+        print(f"🔄 Force consuming Stream ({self.stage_stream})...")
         
         consume_sql = f"""
             INSERT INTO {self.env_db}.COSMETICS.COSMETICS_BZ (SOURCE_FILE)
@@ -55,21 +55,21 @@ class Bronze():
         
         try:
             self.session.sql(consume_sql).collect()
-            print("✅ Stream 指针已成功移动，状态已重置。")
+            print("✅ Stream pointer moved successfully, state has been reset.")
         except Exception as e:
-            print(f"⚠️ 强制消费 Stream 失败: {str(e)}")
+            print(f"⚠️ Force consume Stream failed: {str(e)}")
 
     def _read_and_process_incremental(self, schema_str, file_pattern, table_name):
-        """保持原逻辑：核心处理逻辑"""
-        print(f"\n--- 开始处理表: {table_name} ---")
+        """Keep original logic: Core processing logic"""
+        print(f"\n--- Starting to process table: {table_name} ---")
         
         new_files = self._get_new_files(table_name, file_pattern)
         if not new_files:
-            print(f"☕ {table_name}: 没有检测到新文件，清理 Stream...")
+            print(f"☕ {table_name}: No new files detected, cleaning up Stream...")
             self._force_consume_stream()
             return
 
-        print(f"📂 匹配到 {len(new_files)} 个新文件: {new_files}")
+        print(f"📂 Matched {len(new_files)} new files: {new_files}")
         regex_pattern = f".*({'|'.join([re.escape(f) for f in new_files])}).*"
 
         try:
@@ -94,17 +94,17 @@ class Bronze():
 
             df = self.session.sql(sql_query)
             
-            # 保持原逻辑：调用 GX 校验
+            # Keep original logic: Call GX validation
             batch_id = int(time.time())
             gec.validate_and_insert_process_batch(df=df, batch_id=batch_id, table_name=table_name)
             
-            # 处理后清空 Stream，防止 Task 循环
+            # Clear Stream after processing to prevent Task loop
             self._force_consume_stream()
-            print(f"🚀 {table_name}: 增量加载及校验成功完成。")
+            print(f"🚀 {table_name}: Incremental load and validation completed successfully.")
 
         except Exception as e:
             import traceback
-            print(f"❌ {table_name} 处理异常，保持 Stream 偏移量不变以待重试:")
+            print(f"❌ {table_name} processing exception, keeping Stream offset unchanged for retry:")
             print(traceback.format_exc())
             
     def consume_cosmetics_bz(self):
@@ -112,18 +112,18 @@ class Bronze():
         self._read_and_process_incremental(schema, "cosmetics", "COSMETICS_BZ")
 
     def consume(self):
-        """保持原逻辑：同步 GX 规则并执行"""
+        """Keep original logic: Sync GX rules and execute"""
         start = int(time.time())
         print(f"\n--- Starting Bronze Layer Processing ---")
         
         local_dir = "/tmp/gx_configs/expectations"
         os.makedirs(local_dir, exist_ok=True)
         
-        # 🔴 动态获取 Stage 路径 (对齐最新物理环境)
+        # 🔴 Dynamically get Stage path (align with latest physical environment)
         stage_name_full = f"{self.env_db}.COSMETICS.STAGE_{self.env_db}"
         relative_path = "gx_configs/great_expectations/expectations"
         
-        print(f"📥 正在从 S3 Stage (@{stage_name_full}) 同步校验规则...")
+        print(f"📥 Syncing validation rules from S3 Stage (@{stage_name_full})...")
         
         try:
             files_df = self.session.sql(f"LIST @{stage_name_full}/{relative_path}").collect()
@@ -140,10 +140,10 @@ class Bronze():
             
             gec.BASE_PATH = local_dir
             gec.preload_all_suites()
-            print(f"✅ 校验规则加载完成。")
+            print(f"✅ Validation rules loaded successfully.")
             
         except Exception as e:
-            print(f"⚠️ 同步规则告警 (可能 S3 为空): {str(e)}")
+            print(f"⚠️ Sync rules warning (S3 may be empty): {str(e)}")
 
         self.consume_cosmetics_bz()
         print(f"--- Completed Bronze Layer: {int(time.time()) - start} seconds ---")

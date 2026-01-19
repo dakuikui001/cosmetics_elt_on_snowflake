@@ -11,12 +11,12 @@ from snowflake.snowpark import functions as F
 from snowflake.snowpark import Session
 
 # ==========================================
-# 1. 基础配置
+# 1. Basic configuration
 # ==========================================
 gx_local_root = "/tmp/gx_configs"
 BASE_PATH = os.path.join(gx_local_root, "expectations/")
 
-# 🔴 物理对齐：默认隔离表名
+# 🔴 Physical alignment: Default quarantine table name
 DEFAULT_QUARANTINE_TABLE = "DATA_QUALITY_QUARANTINE"
 
 _SHARED_GX_CONTEXT = None
@@ -24,13 +24,13 @@ _CACHED_SUITES_JSON = {}
 gx_lock = threading.RLock() 
 
 # ==========================================
-# 2. 配置预加载
+# 2. Configuration preloading
 # ==========================================
 def preload_all_suites():
     global _CACHED_SUITES_JSON
     if not os.path.exists(BASE_PATH):
         os.makedirs(BASE_PATH, exist_ok=True)
-        print(f"📁 已创建目录: {BASE_PATH}")
+        print(f"📁 Created directory: {BASE_PATH}")
     
     files = [f for f in os.listdir(BASE_PATH) if f.endswith(".json")]
     for f in files:
@@ -41,9 +41,9 @@ def preload_all_suites():
                 suite_dict.pop("name", None)
                 suite_dict.pop("data_context_id", None)
                 _CACHED_SUITES_JSON[suite_name] = suite_dict
-            print(f"✅ 预加载 Suite: {suite_name}")
+            print(f"✅ Preloaded Suite: {suite_name}")
         except Exception as e:
-            print(f"❌ 加载失败 {f}: {e}")
+            print(f"❌ Failed to load {f}: {e}")
 
 def load_suite_simple(context, suite_name):
     possible_names = [suite_name, suite_name.replace("_bz_suite", "")]
@@ -58,20 +58,20 @@ def load_suite_simple(context, suite_name):
                     expectations=suite_data.get("expectations", [])
                 )
                 return context.suites.add(new_suite)
-    raise FileNotFoundError(f"Suite {suite_name} 未在缓存中找到。")
+    raise FileNotFoundError(f"Suite {suite_name} not found in cache.")
 
 # ==========================================
-# 3. 核心写入函数 (关键修正点)
+# 3. Core write function (key fix point)
 # ==========================================
 def snowflake_iceberg_insert(df, full_table_name):
     """
-    保持原逻辑：列对齐与强转
-    修正点：将 save_as_table 切换为 insert_into，以保护下游 Stream 不被重置
+    Keep original logic: Column alignment and type casting
+    Fix: Switch from save_as_table to insert_into to protect downstream Stream from being reset
     """
     try:
         current_session = df.session 
         
-        # 保持原逻辑：动态对齐目标表 Schema
+        # Keep original logic: Dynamically align with target table Schema
         target_table = current_session.table(full_table_name)
         target_schema = target_table.schema
         
@@ -90,18 +90,18 @@ def snowflake_iceberg_insert(df, full_table_name):
         
         df_aligned = current_df.select(*select_exprs)
 
-        # 🔴 核心修正：
-        # 原逻辑 save_as_table 会重建 Iceberg 元数据导致 Stream 丢失
-        # insert_into 是纯 DML 操作，能确保下游 COSMETICS_BZ_STREAM 捕获到增量
+        # 🔴 Core fix:
+        # Original save_as_table would rebuild Iceberg metadata causing Stream loss
+        # insert_into is a pure DML operation, ensuring downstream COSMETICS_BZ_STREAM captures incremental data
         df_aligned.write.insert_into(full_table_name)
-        print(f"✅ 写入成功: {full_table_name}")
+        print(f"✅ Write successful: {full_table_name}")
         
     except Exception as e:
         print(f"❌ Snowflake Write Error [{full_table_name}]: {e}")
         raise e
 
 # ==========================================
-# 4. 验证与分流处理 (保持原逻辑不变)
+# 4. Validation and routing processing (keep original logic)
 # ==========================================
 def validate_and_insert_process_batch(df, batch_id, table_name):
     if df.count() == 0:
@@ -142,7 +142,7 @@ def validate_and_insert_process_batch(df, batch_id, table_name):
             )
             result = validator.validate(result_format={"result_format": "COMPLETE"})
         except Exception as e:
-            print(f"⚠️ GX 运行异常，降级执行全量插入: {e}")
+            print(f"⚠️ GX runtime exception, fallback to full insert: {e}")
             snowflake_iceberg_insert(df_with_id.drop(temp_id_col), full_target_path)
             return
 
@@ -187,7 +187,7 @@ def validate_and_insert_process_batch(df, batch_id, table_name):
         snowflake_iceberg_insert(df_with_id.drop(temp_id_col), full_target_path)
 
     except Exception as e:
-        print(f"❌ 分流处理失败: {e}")
+        print(f"❌ Routing processing failed: {e}")
         snowflake_iceberg_insert(df_with_id.drop(temp_id_col), full_target_path)
     finally:
         gc.collect()

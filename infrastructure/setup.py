@@ -8,7 +8,7 @@ class SnowflakeSetupHelper():
         self.catalog = f"{db_name.upper()}_DB_{self.env}"
         self.db_name = db_name.upper()      
         
-        # 引用基础设施资源 (需与 setup_infra.sql 中的名称对应)
+        # Reference infrastructure resources (must match names in setup_infra.sql)
         self.external_volume = f'VOL_S3_{self.catalog}'
         self.stage_name = f'STAGE_{self.catalog}' 
         self.initialized = False
@@ -24,14 +24,14 @@ class SnowflakeSetupHelper():
 
     def _create_iceberg_table(self, table_name, columns_sql, location):
         """
-        内部方法：创建 Iceberg 表 (回归原始逻辑)
+        Internal method: Create Iceberg table (revert to original logic)
         """
         if not location.endswith('/'):
             location += '/'
             
         print(f"Creating Iceberg table {table_name} at {location}...", end='')
         
-        # 还原：直接创建，不加 ALTER，不加多余参数
+        # Revert: Create directly, no ALTER, no extra parameters
         self.session.sql(f"""
             CREATE OR REPLACE ICEBERG TABLE {self.catalog}.{self.db_name}.{table_name} (
                 {columns_sql}
@@ -45,8 +45,8 @@ class SnowflakeSetupHelper():
 
     def _create_stream(self, stream_name, table_name):
         """
-        内部方法：创建表级 Stream (还原原始逻辑)
-        Snowflake 在创建 Stream 时会自动尝试为底层表开启 Change Tracking
+        Internal method: Create table-level Stream (revert to original logic)
+        Snowflake automatically tries to enable Change Tracking for the underlying table when creating a Stream
         """
         print(f"Creating Stream {stream_name} on {table_name}...", end='')
         self.session.sql(f"""
@@ -56,13 +56,13 @@ class SnowflakeSetupHelper():
         print("Done")
 
     def setup(self):
-        """部署 Medallion 架构所有逻辑对象 - 还原你之前成功的顺序"""
+        """Deploy all logical objects for Medallion architecture - revert to your previously successful order"""
         start = int(time.time())
         print(f"\n🚀 Starting Snowflake Logical Setup for: {self.catalog}")
         
         self.create_db()
 
-        # 1. Bronze 层
+        # 1. Bronze layer
         self._create_iceberg_table(
             "COSMETICS_BZ", 
             "LABEL STRING, BRAND STRING, NAME STRING, PRICE DOUBLE, RANK DOUBLE, INGREDIENTS STRING, COMBINATION INTEGER, DRY INTEGER, NORMAL INTEGER, OILY INTEGER, SENSITIVE INTEGER, LOAD_TIME TIMESTAMP, SOURCE_FILE STRING", 
@@ -70,7 +70,7 @@ class SnowflakeSetupHelper():
         )
         self._create_stream("COSMETICS_BZ_STREAM", "COSMETICS_BZ")
 
-        # 2. Silver 层
+        # 2. Silver layer
         self._create_iceberg_table(
             "COSMETICS_SL", 
             "LABEL STRING, BRAND STRING, NAME STRING, PRICE DOUBLE, RANK DOUBLE, INGREDIENTS STRING, COMBINATION INTEGER, DRY INTEGER, NORMAL INTEGER, OILY INTEGER, SENSITIVE INTEGER, CLEANSED_TIME TIMESTAMP", 
@@ -78,7 +78,7 @@ class SnowflakeSetupHelper():
         )
         self._create_stream("COSMETICS_SL_STREAM", "COSMETICS_SL")
 
-        # 3. Gold 层
+        # 3. Gold layer
         gold_tables = {
             "FACT_COSMETICS_GL": "NAME STRING, LABEL STRING, BRAND STRING, PRICE DOUBLE, RANK DOUBLE, INGREDIENTS STRING, UPDATE_TIME TIMESTAMP",
             "DIM_BRAND_GL": "BRAND STRING, UPDATE_TIME TIMESTAMP",
@@ -88,7 +88,7 @@ class SnowflakeSetupHelper():
         for name, ddl in gold_tables.items():
             self._create_iceberg_table(name, ddl, f"medallion/gold/{name.lower()}/")
 
-        # 4. Data Quality 隔离表
+        # 4. Data Quality quarantine table
         self._create_iceberg_table(
             "DATA_QUALITY_QUARANTINE",
             "TABLE_NAME STRING, GX_BATCH_ID STRING, VIOLATED_RULES STRING, RAW_DATA STRING, INGESTION_TIME TIMESTAMP",
@@ -98,7 +98,7 @@ class SnowflakeSetupHelper():
         print(f"✅ Setup completed in {int(time.time()) - start} seconds")
 
     def cleanup(self):
-        """物理级彻底清理"""
+        """Complete physical-level cleanup"""
         print(f"\n--- Starting Full Physical Cleanup ---")
         full_path = f"{self.catalog}.{self.db_name}"
         
@@ -121,7 +121,7 @@ class SnowflakeSetupHelper():
             print(f"Notice: S3 path cleanup handled by Snowflake. {e}")
 
     def validate(self):
-        """环境验证"""
+        """Environment validation"""
         print(f"\n--- [Step 3] Validating Environment for {self.catalog}.{self.db_name} ---")
         
         expected_tables = [

@@ -11,11 +11,11 @@ class SnowparkUpserter:
     def upsert(self, df_incremental):
         session = df_incremental.session
         
-        # 1. 设置别名 "src"
+        # 1. Set alias "src"
         df_incremental = df_incremental.alias("src")
         
-        # 🔴 修正：不要使用 "src.NAME" 字符串引用，改用 df_incremental 对象引用
-        # 这样 Snowpark 会生成 src."NAME"，从而避免标识符编译错误
+        # 🔴 Fix: Don't use "src.NAME" string reference, use df_incremental object reference instead
+        # This way Snowpark generates src."NAME", avoiding identifier compilation errors
         window_spec = Window.partition_by(df_incremental[self.join_col]) \
                             .order_by(df_incremental["LOAD_TIME"].desc())
         
@@ -25,20 +25,20 @@ class SnowparkUpserter:
 
         affected_rows = df_final.count() 
 
-        # 2. 获取目标表对象
+        # 2. Get target table object
         target_table = session.table(self.target_table_name)
 
-        # 3. 构造映射 
-        # 修正：将 "UPDATE_TIME" 改为 "CLEANSED_TIME"
+        # 3. Build mapping 
+        # Fix: Change "UPDATE_TIME" to "CLEANSED_TIME"
         mapping = {col.upper(): df_final[col.upper()] for col in self.biz_columns}
         mapping["CLEANSED_TIME"] = F.current_timestamp()
 
-        # 4. 执行 Merge
+        # 4. Execute Merge
         if affected_rows > 0:
-            print(f"🚀 正在合并 {affected_rows} 条数据至 {self.target_table_name}...")
+            print(f"🚀 Merging {affected_rows} records into {self.target_table_name}...")
             target_table.merge(
                 df_final,
-                # 🔴 修正：此处也使用对象引用
+                # 🔴 Fix: Use object reference here as well
                 target_table[self.join_col] == df_final[self.join_col],
                 [
                     F.when_matched().update(mapping),
@@ -59,18 +59,18 @@ class Silver:
 
     def _run_process(self, stream_name, upserter_obj, transform_func):
         full_stream_name = f"{self.catalog}.{self.schema}.{stream_name}"
-        print(f"📡 扫描增量 Stream: {full_stream_name}...")
+        print(f"📡 Scanning incremental Stream: {full_stream_name}...")
         
         df_stream = self.session.table(full_stream_name)
         df_new = df_stream.filter(F.col("METADATA$ACTION") == "INSERT")
         
         if len(df_new.limit(1).collect()) == 0:
-            print("☕ 无增量数据。")
+            print("☕ No incremental data.")
             return 0
 
         df_transformed = transform_func(df_new)
         
-        # 隔离元数据列，只保留业务列和 LOAD_TIME
+        # Filter out metadata columns, keep only business columns and LOAD_TIME
         cols_to_keep = upserter_obj.biz_columns + ["LOAD_TIME"]
         df_final_input = df_transformed.select(*cols_to_keep)
 
@@ -102,6 +102,6 @@ class Silver:
 
     def consume(self):
         start = int(time.time())
-        print(f"\n[Silver Layer Pipeline Started] 环境: {self.catalog}")
+        print(f"\n[Silver Layer Pipeline Started] Environment: {self.catalog}")
         count = self.upsert_cosmetics_sl()
-        print(f"✅ 处理完成。条数: {count}，耗时: {int(time.time()) - start}s")
+        print(f"✅ Processing completed. Records: {count}, Duration: {int(time.time()) - start}s")

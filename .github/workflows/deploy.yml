@@ -41,7 +41,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # --- 1. Terraform 阶段 ---
+      # --- 1. Terraform stage ---
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
@@ -56,7 +56,7 @@ jobs:
           terraform import snowflake_schema.cosmetics_schema "\"COSMETICS_DB_DEV\".\"COSMETICS\"" || true
           terraform apply -auto-approve
 
-      # --- 2. Python 环境准备 ---
+      # --- 2. Python environment setup ---
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -67,7 +67,7 @@ jobs:
           pip install snowflake-snowpark-python pandas
           pip install great-expectations==1.8.0
 
-      # --- 3. 执行物理层基础设施 SQL (Storage Integration, External Stage 等) ---
+      # --- 3. Execute physical infrastructure SQL (Storage Integration, External Stage, etc.) ---
       - name: Run Physical Infrastructure SQL
         if: needs.check_changes.outputs.infra_sql == 'true' || github.event_name == 'workflow_dispatch'
         run: |
@@ -88,28 +88,28 @@ jobs:
 
           try:
               sql_file = 'infrastructure/setup_infra.sql'
-              print(f'🚀 正在执行物理层部署: {sql_file}')
+              print(f'🚀 Executing physical infrastructure deployment: {sql_file}')
               with open(sql_file, 'r') as f:
                   queries = [q.strip() for q in f.read().split(';') if q.strip()]
                   for query in queries:
                       if is_valid_sql(query):
                           session.sql(query).collect()
-              print('✅ 物理层 SQL 执行成功！')
+              print('✅ Physical infrastructure SQL executed successfully!')
           except Exception as e:
-              print(f'❌ 执行失败: {str(e)}')
+              print(f'❌ Execution failed: {str(e)}')
               exit(1)
           finally:
               session.close()
           "
 
-      # --- 4. 运行 Table & Stream Setup (逻辑层表结构) ---
+      # --- 4. Run Table & Stream Setup (logical layer table structure) ---
       - name: Run Table & Stream Setup
         if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
         env:
           DEPLOY_ENV: "DEV"
         run: python infrastructure/setup_tables.py
 
-      # --- 5. 配置 AWS 凭证 ---
+      # --- 5. Configure AWS credentials ---
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -117,20 +117,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-southeast-1
 
-      # --- 6. 生成并同步 GX Configs (JSON 规则文件) ---
+      # --- 6. Generate and sync GX Configs (JSON rule files) ---
       - name: Generate and Sync GX Configs
         if: needs.check_changes.outputs.infra_all == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           python infrastructure/setup_gx.py
           aws s3 sync /tmp/gx_configs ${{ env.S3_PATH }}/gx_configs/great_expectations/ --delete
 
-      # --- 7. 同步 Python 业务逻辑代码 ---
+      # --- 7. Sync Python business logic code ---
       - name: Sync Pipeline Code to S3
         if: needs.check_changes.outputs.pipelines == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           aws s3 sync ./pipelines ${{ env.S3_PATH }}/python_code/ --delete
 
-      # --- 8. 注册存储过程并启动 Task (DAG 编排) ---
+      # --- 8. Register stored procedures and start Tasks (DAG orchestration) ---
       - name: Deploy Snowflake DAG
         if: needs.check_changes.outputs.pipelines == 'true' || github.event_name == 'workflow_dispatch'
         run: |
@@ -146,13 +146,13 @@ jobs:
               'schema': 'COSMETICS'
           }).create()
           try:
-              print('🚀 正在部署 DAG (Procedures & Tasks)...')
+              print('🚀 Deploying DAG (Procedures & Tasks)...')
               with open('orchestration/deploy_dags.sql', 'r') as f:
                   queries = [q.strip() for q in f.read().split(';') if q.strip()]
                   for query in queries:
                       if query:
                           session.sql(query).collect()
-              print('✅ DAG 部署与 Task 启动成功！')
+              print('✅ DAG deployment and Task startup successful!')
           finally:
               session.close()
           "

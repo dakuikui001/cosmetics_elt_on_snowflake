@@ -5,7 +5,7 @@ import great_expectations.expectations as gxe
 from snowflake.snowpark import Session
 
 def run_gx_setup():
-    # 建立会话仅用于清理 Stage 上的旧标记（如果需要）
+    # Create session only for cleaning up old markers on Stage (if needed)
     connection_parameters = {
         "account": os.getenv("SNOWFLAKE_ACCOUNT"),
         "user": os.getenv("SNOWFLAKE_USER"),
@@ -17,12 +17,12 @@ def run_gx_setup():
     
     gx_local_root = "/tmp/gx_configs"
     
-    # 1. 清理本地旧配置
+    # 1. Clean up old local configurations
     if os.path.exists(gx_local_root):
         shutil.rmtree(gx_local_root)
     os.makedirs(gx_local_root, exist_ok=True)
 
-    # 2. 初始化 GX 并生成规则 (你的 1.10.0 逻辑)
+    # 2. Initialize GX and generate rules (GX 1.10.0 logic)
     context = gx.get_context(context_root_dir=gx_local_root)
 
     table_rules_mapping = {
